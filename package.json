@@ -1,0 +1,22 @@
+{
+    "name": "backend_one",
+    "version": "1.0.0",
+    "description": "Project on managing projects on a single platform",
+    "main": "index.js",
+    "directories": {
+        "test": "test"
+    },
+    "type": "module",
+    "scripts": {
+        "dev": "node index.js"
+    },
+    "keywords": [
+        "management",
+        "project"
+    ],
+    "author": "Akshat Chaurasia",
+    "license": "ISC",
+    "devDependencies": {
+        "prettier": "3.8.4"
+    }
+}
