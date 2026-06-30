@@ -13,13 +13,19 @@ const mailGenerator = new Mailgen({
     },
 });
 
-const generateMail = (emailBody, subject) => {
-    return {
-        subject,
-        html: mailGenerator.generate(emailBody),
-        text: mailGenerator.generatePlaintext(emailBody),
-    };
-};
+const transporter = nodemailer.createTransport({
+    host: process.env.MAILTRAP_HOST,
+    port: Number(process.env.MAILTRAP_PORT),
+    auth: {
+        user: process.env.MAILTRAP_USER,
+        pass: process.env.MAILTRAP_PASS,
+    },
+});
+
+const generateMail = (emailBody, subject) => ({
+    subject,
+    emailBody,
+});
 
 const buildAction = (instructions, buttonText, buttonLink) => {
     if (!buttonLink) return undefined;
@@ -50,13 +56,9 @@ const generateWelcomeUserMail = ({ name = "User", loginUrl = appUrl } = {}) => {
         outro: `Need Help? Reach us at ${supportEmail}`,
     };
 
-    if (action) {
-        body.action = action;
-    }
+    if (action) body.action = action;
 
-    const emailBody = { body };
-
-    return generateMail(emailBody, `Welcome to ${appName}`);
+    return generateMail({ body }, `Welcome to ${appName}`);
 };
 
 const generateForgotPasswordMail = ({ name = "User", resetUrl } = {}) => {
@@ -77,38 +79,55 @@ const generateForgotPasswordMail = ({ name = "User", resetUrl } = {}) => {
 
     if (action) body.action = action;
 
-    const emailBody = { body };
+    return generateMail({ body }, `Reset your ${appName} password`);
+};
 
-    return generateMail(emailBody, `Reset your ${appName} password`);
+const generateEmailVerificationMail = ({
+    name = "User",
+    verificationToken,
+} = {}) => {
+    const verificationUrl = `${appUrl}/verify-email?token=${verificationToken}`;
+
+    const action = buildAction(
+        "Click the button below to verify your email address:",
+        "Verify Email",
+        verificationUrl,
+    );
+
+    const body = {
+        name,
+        intro: [
+            `Welcome to ${appName}.`,
+            "Please verify your email address to activate your account.",
+        ],
+        outro: [
+            "If you did not create this account, you can safely ignore this email.",
+        ],
+    };
+
+    if (action) body.action = action;
+
+    return generateMail({ body }, "Please Verify Your Email");
 };
 
 const sendMail = async ({ email, subject, emailBody }) => {
     try {
-        const emailText = mailGenerator.generatePlaintext(emailBody);
-        const emailHtml = mailGenerator.generate(emailBody);
-
-        const transporter = nodemailer.createTransport({
-            host: process.env.MAILTRAP_HOST,
-            port: Number(process.env.MAILTRAP_PORT),
-            auth: {
-                user: process.env.MAILTRAP_USER,
-                pass: process.env.MAILTRAP_PASS,
-            },
-        });
-
-        const mail = {
+        return await transporter.sendMail({
             from: process.env.MAILTRAP_SENDEREMAIL || supportEmail,
             to: email,
             subject,
-            text: emailText,
-            html: emailHtml,
-        };
-
-        return await transporter.sendMail(mail);
+            text: mailGenerator.generatePlaintext(emailBody),
+            html: mailGenerator.generate(emailBody),
+        });
     } catch (error) {
         console.error("Mail error:", error);
         throw error;
     }
 };
 
-export { generateWelcomeUserMail, generateForgotPasswordMail, sendMail };
+export {
+    generateWelcomeUserMail,
+    generateForgotPasswordMail,
+    generateEmailVerificationMail,
+    sendMail,
+};
