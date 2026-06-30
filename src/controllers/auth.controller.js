@@ -56,16 +56,15 @@ const registerUser = asyncHandler(async (req, res) => {
         }),
     });
 
+    const createdUser = await User.findById(user._id).select(
+        "-password -refreshToken -emailVerificationToken",
+    );
+
     return res.status(201).json(
         new ApiResponse(
             201,
             {
-                user: {
-                    id: user._id,
-                    username: user.username,
-                    email: user.email,
-                    isEmailVerified: user.isEmailVerified,
-                },
+                createdUser,
             },
             "Registration successful. Please check your email to verify your account.",
         ),
