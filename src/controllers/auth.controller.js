@@ -33,40 +33,59 @@ const registerUser = asyncHandler(async (req, res) => {
         );
     }
 
-    const user = await User.create({
-        username,
-        email,
-        password,
-        isEmailVerified: false,
-    });
+    let user;
 
-    const { unHashedToken, hashedToken, tokenExpiry } =
-        user.generateTemporaryToken();
+    try {
+        user = await User.create({
+            username,
+            email,
+            password,
+            isEmailVerified: false,
+        });
 
-    user.emailVerificationToken = hashedToken;
-    user.emailVerificationExpiry = tokenExpiry;
+        const { unHashedToken, hashedToken, tokenExpiry } =
+            user.generateTemporaryToken();
 
-    await user.save({ validateBeforeSave: false });
+        user.emailVerificationToken = hashedToken;
+        user.emailVerificationExpiry = tokenExpiry;
 
-    await sendMail({
-        email: user.email,
-        ...generateEmailVerificationMail({
-            name: user.username,
-            verificationToken: unHashedToken,
-        }),
-    });
+        await user.save({ validateBeforeSave: false });
 
-    const createdUser = await User.findById(user._id).select(
-        "-password -refreshToken -emailVerificationToken",
-    );
+        await sendMail({
+            email: user.email,
+            ...generateEmailVerificationMail({
+                name: user.username,
+                verificationToken: unHashedToken,
+            }),
+        });
 
-    return res.status(201).json(
-        new ApiResponse(
-            201,
-            {
-                createdUser,
-            },
-            "Registration successful. Please check your email to verify your account.",
-        ),
-    );
+        const createdUser = await User.findById(user._id).select(
+            "-password -refreshToken -emailVerificationToken -emailVerificationExpiry",
+        );
+
+        if (!createdUser) {
+            throw new ApiError(
+                500,
+                "Something went wrong while creating user.",
+            );
+        }
+
+        return res
+            .status(201)
+            .json(
+                new ApiResponse(
+                    201,
+                    createdUser,
+                    "Registration successful. Please check your email to verify your account.",
+                ),
+            );
+    } catch (error) {
+        if (user) {
+            await User.findByIdAndDelete(user._id);
+        }
+
+        throw error;
+    }
 });
+
+export { registerUser };
