@@ -1,5 +1,5 @@
 import mongoose, { Schema } from "mongoose";
-import bcrypt from "bcrypt";
+import brcypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 
@@ -64,21 +64,21 @@ const userSchema = new Schema(
 );
 
 userSchema.pre("save", async function () {
-    // No need for next here //
     if (!this.isModified("password")) return;
-    this.password = await bcrypt.hash(this.password, 10);
+
+    this.password = await brcypt.hash(this.password, 10);
 });
 
-userSchema.methods.verifyPassword = async function (password) {
-    return await bcrypt.compare(this.password, password);
+userSchema.methods.isPasswordCorrect = async function (password) {
+    return await brcypt.compare(password, this.password);
 };
 
 userSchema.methods.generateAccessToken = function () {
     return jwt.sign(
         {
             _id: this._id,
-            username: this.username,
             email: this.email,
+            username: this.username,
         },
         process.env.ACCESS_TOKEN_SECRET,
         { expiresIn: process.env.ACCESS_TOKEN_EXPIRY },
@@ -89,8 +89,6 @@ userSchema.methods.generateRefreshToken = function () {
     return jwt.sign(
         {
             _id: this._id,
-            username: this.username,
-            email: this.email,
         },
         process.env.REFRESH_TOKEN_SECRET,
         { expiresIn: process.env.REFRESH_TOKEN_EXPIRY },
@@ -105,8 +103,7 @@ userSchema.methods.generateTemporaryToken = function () {
         .update(unHashedToken)
         .digest("hex");
 
-    const tokenExpiry = Date.now() + 7 * 1000 * 60; // 7 min
-
+    const tokenExpiry = Date.now() + 20 * 60 * 1000; //20 mins
     return { unHashedToken, hashedToken, tokenExpiry };
 };
 

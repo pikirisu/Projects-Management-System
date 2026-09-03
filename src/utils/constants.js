@@ -1,19 +1,15 @@
-const availableRoles = {
-    ADMIN: "Admin",
-    Project_Admin: "Project_Admin",
-    Member: "Member",
+export const UserRolesEnum = {
+  ADMIN: "admin",
+  PROJECT_ADMIN: "project_admin",
+  MEMBER: "member",
 };
 
-const availableRolesEnum = Object.values(availableRoles);
+export const AvailableUserRole = Object.values(UserRolesEnum);
 
-export default availableRolesEnum;
-
-const availableTaskStatus = {
-    todo: "todo",
-    in_progress: "in_progress",
-    done: "done",
+export const TaskStatusEnum = {
+  TODO: "todo",
+  IN_PROGRESS: "in_progress",
+  DONE: "done",
 };
 
-const availableTaskStatusEnum = Object.values(availableTaskStatus);
-
-export default availableTaskStatusEnum;
+export const AvailableTaskStatues = Object.values(TaskStatusEnum);

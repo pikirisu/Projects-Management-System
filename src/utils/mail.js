@@ -1,133 +1,88 @@
 import Mailgen from "mailgen";
 import nodemailer from "nodemailer";
 
-const appName = process.env.APP_NAME || "Backend One";
-const appUrl = process.env.APP_URL || "http://localhost:3000";
-const supportEmail = process.env.SUPPORT_EMAIL || "support@example.com";
-
-const mailGenerator = new Mailgen({
-    theme: "cerberus",
+const sendEmail = async (options) => {
+  const mailGenerator = new Mailgen({
+    theme: "default",
     product: {
-        name: appName,
-        link: appUrl,
+      name: "Task Manager",
+      link: "https://taskmanagelink.com",
     },
-});
+  });
 
-const transporter = nodemailer.createTransport({
-    host: process.env.MAILTRAP_HOST,
-    port: Number(process.env.MAILTRAP_PORT),
+  const emailTextual = mailGenerator.generatePlaintext(options.mailgenContent);
+
+  const emailHtml = mailGenerator.generate(options.mailgenContent);
+
+  const transporter = nodemailer.createTransport({
+    host: process.env.MAILTRAP_SMTP_HOST,
+    port: process.env.MAILTRAP_SMTP_PORT,
     auth: {
-        user: process.env.MAILTRAP_USER,
-        pass: process.env.MAILTRAP_PASS,
+      user: process.env.MAILTRAP_SMTP_USER,
+      pass: process.env.MAILTRAP_SMTP_PASS,
     },
-});
+  });
 
-const generateMail = (emailBody, subject) => ({
-    subject,
-    emailBody,
-});
+  const mail = {
+    from: "mail.taskmanager@example.com",
+    to: options.email,
+    subject: options.subject,
+    text: emailTextual,
+    html: emailHtml,
+  };
 
-const buildAction = (instructions, buttonText, buttonLink) => {
-    if (!buttonLink) return undefined;
+  try {
+    await transporter.sendMail(mail);
+  } catch (error) {
+    console.error(
+      "Email service failed siliently. Make sure that you have provided your MAILTRAP credentials in the .env file",
+    );
+    console.error("Error: ", error);
+  }
+};
 
-    return {
-        instructions,
+const emailVerificationMailgenContent = (username, verficationUrl) => {
+  return {
+    body: {
+      name: username,
+      intro: "Welcome to our App! we'are excited to have you on board.",
+      action: {
+        instructions:
+          "To verify your email please click on the following button",
         button: {
-            color: "#2563eb",
-            text: buttonText,
-            link: buttonLink,
+          color: "#22BC66",
+          text: "Verify your email",
+          link: verficationUrl,
         },
-    };
+      },
+      outro:
+        "Need help, or have questions? Just reply to this email, we'd love to help.",
+    },
+  };
 };
 
-const generateWelcomeUserMail = ({ name = "User", loginUrl = appUrl } = {}) => {
-    const action = buildAction(
-        "You can start using your account here",
-        "Log In",
-        loginUrl,
-    );
-
-    const body = {
-        name,
-        intro: [
-            `Welcome to ${appName}.`,
-            "Your account has been created successfully.",
-        ],
-        outro: `Need Help? Reach us at ${supportEmail}`,
-    };
-
-    if (action) body.action = action;
-
-    return generateMail({ body }, `Welcome to ${appName}`);
-};
-
-const generateForgotPasswordMail = ({ name = "User", resetUrl } = {}) => {
-    const action = buildAction(
-        "Click the button below to set a new password:",
-        "Reset Password",
-        resetUrl,
-    );
-
-    const body = {
-        name,
-        intro: ["We received a request to reset your password."],
-        outro: [
-            "If you did not request this, you can safely ignore this email.",
-            `For support, contact ${supportEmail}.`,
-        ],
-    };
-
-    if (action) body.action = action;
-
-    return generateMail({ body }, `Reset your ${appName} password`);
-};
-
-const generateEmailVerificationMail = ({
-    name = "User",
-    verificationToken,
-} = {}) => {
-    const verificationUrl = `${appUrl}/verify-email?token=${verificationToken}`;
-
-    const action = buildAction(
-        "Click the button below to verify your email address:",
-        "Verify Email",
-        verificationUrl,
-    );
-
-    const body = {
-        name,
-        intro: [
-            `Welcome to ${appName}.`,
-            "Please verify your email address to activate your account.",
-        ],
-        outro: [
-            "If you did not create this account, you can safely ignore this email.",
-        ],
-    };
-
-    if (action) body.action = action;
-
-    return generateMail({ body }, "Please Verify Your Email");
-};
-
-const sendMail = async ({ email, subject, emailBody }) => {
-    try {
-        return await transporter.sendMail({
-            from: process.env.MAILTRAP_SENDEREMAIL || supportEmail,
-            to: email,
-            subject,
-            text: mailGenerator.generatePlaintext(emailBody),
-            html: mailGenerator.generate(emailBody),
-        });
-    } catch (error) {
-        console.error("Mail error:", error);
-        throw error;
-    }
+const forgotPasswordMailgenContent = (username, passwordResetUrl) => {
+  return {
+    body: {
+      name: username,
+      intro: "We got a request to reset the password of your account",
+      action: {
+        instructions:
+          "To reset your password click on the following button or link",
+        button: {
+          color: "#22BC66",
+          text: "Reset password",
+          link: passwordResetUrl,
+        },
+      },
+      outro:
+        "Need help, or have questions? Just reply to this email, we'd love to help.",
+    },
+  };
 };
 
 export {
-    generateWelcomeUserMail,
-    generateForgotPasswordMail,
-    generateEmailVerificationMail,
-    sendMail,
+  emailVerificationMailgenContent,
+  forgotPasswordMailgenContent,
+  sendEmail,
 };
