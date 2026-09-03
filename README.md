@@ -98,7 +98,13 @@ The application loads environment variables from `.env` in the project root.
 | `MAILTRAP_SMTP_USER` | Yes, for email | Mail utility | SMTP username. |
 | `MAILTRAP_SMTP_PASS` | Yes, for email | Mail utility | SMTP password. |
 | `SERVER_URL` | Yes | Task controller | Base URL used to build task attachment links (e.g. `http://localhost:8000`). Also used by `scripts/verify.mjs`. |
-| `NODE_ENV` | No | Auth controller | When set to `production`, auth cookies are sent with `secure: true`. Leave unset for local HTTP testing. |
+| `NODE_ENV` | No | Cookie options | When set to `production`, auth cookies are sent with `secure: true`. Leave unset for local HTTP testing. |
+| `COOKIE_SAMESITE` | No | Cookie options | `strict` (default), `lax`, or `none`. Use `none` only for a cross-site frontend; it forces `secure: true` regardless of `NODE_ENV`. |
+| `REQUIRE_EMAIL_VERIFICATION` | No | Auth controller | When `"true"`, login rejects users whose email is unverified with a 403. Defaults to off. |
+| `RATE_LIMIT_ENABLED` | No | Rate limit middleware | Set to `"false"` to disable all rate limiting. Needed when running `scripts/verify.mjs` repeatedly. |
+| `RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW_MS` | No | Rate limit middleware | Global budget per IP. Defaults to 300 requests per 15 minutes. |
+| `AUTH_RATE_LIMIT_MAX` / `AUTH_RATE_LIMIT_WINDOW_MS` | No | Rate limit middleware | Budget for auth endpoints. Defaults to 20 *failed* attempts per 15 minutes; successful logins are not counted. |
+| `TRUST_PROXY` | No | `src/app.js` | Number of proxy hops to trust. Required behind a reverse proxy so rate limiting sees the real client IP. Leave unset locally. |
 
 Example `.env` shape:
 
@@ -120,6 +126,11 @@ MAILTRAP_SMTP_USER=replace-with-smtp-user
 MAILTRAP_SMTP_PASS=replace-with-smtp-password
 
 SERVER_URL=http://localhost:3000
+
+# Optional security tuning (defaults shown)
+COOKIE_SAMESITE=strict
+REQUIRE_EMAIL_VERIFICATION=false
+RATE_LIMIT_ENABLED=true
 ```
 
 Note: `mail.js` catches SMTP errors and logs them rather than throwing, so registration/password-reset requests still return success even if the email itself fails to send (e.g. wrong credentials, or Mailtrap's free-tier per-second rate limit). Check the server console when debugging email delivery.
@@ -209,9 +220,35 @@ This is a backend API project, so no application UI screenshots are available in
 `scripts/verify.mjs` is an end-to-end smoke test (Node's built-in `node:test` + `fetch`, no extra dependencies) that runs against a live `npm run dev` server and the real MongoDB database configured in `.env`. It registers two users, exercises project/task/subtask/note CRUD and RBAC (including cross-project access and the member-vs-admin subtask permission split), and cleans up everything it creates.
 
 ```bash
-npm run dev            # in one terminal
-node scripts/verify.mjs # in another, once the server is up
+npm run dev                                       # in one terminal
+RATE_LIMIT_ENABLED=false node scripts/verify.mjs  # in another, once the server is up
 ```
+
+Disabling the rate limiter matters: the script makes several auth calls per run and would
+otherwise exhaust the auth budget after a few consecutive runs.
+
+## Security Notes
+
+- **Project-scoped resource access.** Every task, subtask, and note lookup is constrained to the
+  `:projectId` in the URL, not just the child's own id. A mismatch returns **404 rather than 403**,
+  so the response cannot be used to probe whether a resource exists in another project.
+  `scripts/verify.mjs` covers this directly.
+- **Upload allowlist.** `src/middlewares/multer.middleware.js` accepts a file only when its MIME
+  type is known *and* its extension belongs to that type, which also rejects double-extension
+  tricks like `a.txt.html`. SVG is deliberately excluded because it can carry inline `<script>`.
+  Stored filenames are random UUIDs, and everything under `public/` is served with
+  `Content-Disposition: attachment` and `X-Content-Type-Options: nosniff`.
+- **Account enumeration.** Login answers `401 Invalid credentials` for both an unknown address and
+  a wrong password, and forgot-password always returns the same 200. Note one residual gap: a
+  request for a nonexistent user skips bcrypt and so returns measurably faster. Closing that timing
+  side-channel would mean comparing against a dummy hash on the miss path.
+- **CORS.** `CORS_ORIGIN=*` combined with `credentials: true` lets any origin send authenticated
+  requests; the server logs a warning at startup. Set an explicit comma-separated origin list
+  before deploying.
+- **Tokens are returned in the login response body as well as in httpOnly cookies.** This is a
+  deliberate dual-client design (cookies for browsers, `Authorization: Bearer` for API and mobile
+  clients), but it does mean an XSS bug could read a token from the response. A browser-only
+  deployment should drop the body tokens.
 
 ## Future Improvements
 

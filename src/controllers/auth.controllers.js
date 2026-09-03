@@ -7,6 +7,11 @@ import {
     forgotPasswordMailgenContent,
     sendEmail,
 } from "../utils/mail.js";
+import {
+    accessCookieOptions,
+    getCookieOptions,
+    refreshCookieOptions,
+} from "../utils/cookie-options.js";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
 
@@ -28,7 +33,7 @@ const generateAccessAndRefreshTokens = async (userId) => {
 };
 
 const registerUser = asyncHandler(async (req, res) => {
-    const { email, username, password, role } = req.body;
+    const { email, username, password } = req.body;
 
     const existedUser = await User.findOne({
         $or: [{ username }, { email }],
@@ -89,22 +94,24 @@ const registerUser = asyncHandler(async (req, res) => {
 });
 
 const login = asyncHandler(async (req, res) => {
-    const { email, password, username } = req.body;
-
-    if (!email) {
-        throw new ApiError(400, " email is required");
-    }
+    const { email, password } = req.body;
 
     const user = await User.findOne({ email });
 
-    if (!user) {
-        throw new ApiError(400, "User does not exists");
+    // A distinct "user does not exist" message lets an attacker enumerate which
+    // addresses are registered, so both failure modes answer identically.
+    if (!user || !(await user.isPasswordCorrect(password))) {
+        throw new ApiError(401, "Invalid credentials");
     }
 
-    const isPasswordValid = await user.isPasswordCorrect(password);
-
-    if (!isPasswordValid) {
-        throw new ApiError(400, "Invalid credentials");
+    if (
+        process.env.REQUIRE_EMAIL_VERIFICATION === "true" &&
+        !user.isEmailVerified
+    ) {
+        throw new ApiError(
+            403,
+            "Please verify your email address before logging in",
+        );
     }
 
     const { accessToken, refreshToken } = await generateAccessAndRefreshTokens(
@@ -115,15 +122,10 @@ const login = asyncHandler(async (req, res) => {
         "-password -refreshToken -emailVerificationToken -emailVerificationExpiry",
     );
 
-    const options = {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-    };
-
     return res
         .status(200)
-        .cookie("accessToken", accessToken, options)
-        .cookie("refreshToken", refreshToken, options)
+        .cookie("accessToken", accessToken, accessCookieOptions())
+        .cookie("refreshToken", refreshToken, refreshCookieOptions())
         .json(
             new ApiResponse(
                 200,
@@ -149,14 +151,10 @@ const logoutUser = asyncHandler(async (req, res) => {
             new: true,
         },
     );
-    const options = {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-    };
     return res
         .status(200)
-        .clearCookie("accessToken", options)
-        .clearCookie("refreshToken", options)
+        .clearCookie("accessToken", getCookieOptions())
+        .clearCookie("refreshToken", getCookieOptions())
         .json(new ApiResponse(200, {}, "User logged out"));
 });
 
@@ -261,21 +259,16 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
             throw new ApiError(401, "Refresh token in expired");
         }
 
-        const options = {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === "production",
-        };
-
         const { accessToken, refreshToken: newRefreshToken } =
             await generateAccessAndRefreshTokens(user._id);
 
-        user.refreshToken = newRefreshToken;
-        await user.save();
+        // generateAccessAndRefreshTokens already persisted the rotated token;
+        // re-saving here would write back a stale document instance.
 
         return res
             .status(200)
-            .cookie("accessToken", accessToken, options)
-            .cookie("refreshToken", newRefreshToken, options)
+            .cookie("accessToken", accessToken, accessCookieOptions())
+            .cookie("refreshToken", newRefreshToken, refreshCookieOptions())
             .json(
                 new ApiResponse(
                     200,
@@ -293,26 +286,26 @@ const forgotPasswordRequest = asyncHandler(async (req, res) => {
 
     const user = await User.findOne({ email });
 
-    if (!user) {
-        throw new ApiError(404, "User does not exists", []);
+    // Respond identically whether or not the address exists: a 404 here would
+    // turn this endpoint into an account-enumeration oracle.
+    if (user) {
+        const { unHashedToken, hashedToken, tokenExpiry } =
+            user.generateTemporaryToken();
+
+        user.forgotPasswordToken = hashedToken;
+        user.forgotPasswordExpiry = tokenExpiry;
+
+        await user.save({ validateBeforeSave: false });
+
+        await sendEmail({
+            email: user.email,
+            subject: "Password reset request",
+            mailgenContent: forgotPasswordMailgenContent(
+                user.username,
+                `${process.env.FORGOT_PASSWORD_REDIRECT_URL}/${unHashedToken}`,
+            ),
+        });
     }
-
-    const { unHashedToken, hashedToken, tokenExpiry } =
-        user.generateTemporaryToken();
-
-    user.forgotPasswordToken = hashedToken;
-    user.forgotPasswordExpiry = tokenExpiry;
-
-    await user.save({ validateBeforeSave: false });
-
-    await sendEmail({
-        email: user?.email,
-        subject: "Password reset request",
-        mailgenContent: forgotPasswordMailgenContent(
-            user.username,
-            `${process.env.FORGOT_PASSWORD_REDIRECT_URL}/${unHashedToken}`,
-        ),
-    });
 
     return res
         .status(200)
