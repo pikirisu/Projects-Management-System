@@ -18,7 +18,11 @@ Backend One is a Node.js and Express REST API for project-management workflows. 
 - Subtask CRUD, with member access limited to toggling completion (only admin/project_admin can create, delete, or rename subtasks).
 - Project notes CRUD, restricted to admin for create/update/delete; all project roles can read.
 - Mongoose schemas for users, projects, project members, tasks, subtasks, and project notes.
-- Centralized JSON error handling for `ApiError`, Mongoose validation/cast errors, and malformed ObjectIds.
+- Project-scoped resource authorization: task, subtask, and note lookups are constrained to the project in the URL, not just the child's own id.
+- Upload allowlist (MIME plus extension must agree), randomised stored filenames, and uploads served as non-executable attachments.
+- Security headers via `helmet`, and per-IP rate limiting with a stricter budget on authentication endpoints.
+- Hardened auth cookies (`httpOnly`, `SameSite`, and a `maxAge` matching the token's own expiry).
+- Centralized JSON error handling for `ApiError`, Multer upload errors, Mongo duplicate keys, Mongoose validation/cast errors, and malformed ObjectIds.
 
 ## Tech Stack
 
@@ -87,7 +91,7 @@ The application loads environment variables from `.env` in the project root.
 | --- | --- | --- | --- |
 | `MONGO_URI` | Yes | `src/db/index.js` | MongoDB connection string. |
 | `PORT` | No | `src/index.js` | Server port. Defaults to `3000`. |
-| `CORS_ORIGIN` | No | `src/app.js` | Comma-separated list of allowed CORS origins. The code falls back to `http://locahost:5173`. |
+| `CORS_ORIGIN` | No | `src/app.js` | Comma-separated list of allowed origins. Unset or `*` reflects the caller's origin and logs a startup warning, since `*` alongside `credentials: true` lets any site send authenticated requests. |
 | `ACCESS_TOKEN_SECRET` | Yes | User model, auth middleware | Secret used to sign and verify access tokens. |
 | `ACCESS_TOKEN_EXPIRY` | Yes | User model | Access-token lifetime, such as `1d` or `15m`. |
 | `REFRESH_TOKEN_SECRET` | Yes | User model, auth controller | Secret used to sign and verify refresh tokens. |
@@ -198,13 +202,13 @@ The current Express app mounts routes under `/api/v1` for health checks, authent
 
 ## Architecture Overview
 
-`src/index.js` loads `.env`, connects to MongoDB, and starts the Express server. `src/app.js` configures shared middleware, serves static files from `public`, applies CORS settings, and mounts the healthcheck, authentication, and project routers.
+`src/index.js` loads `.env` via a leading `import "dotenv/config"`, connects to MongoDB, and starts the Express server. The import must come first: ES module imports are evaluated before any statement in the file, so calling `dotenv.config()` further down would leave `process.env` empty while `app.js` and its dependencies are still being loaded. `src/app.js` configures shared middleware, serves static files from `public`, applies CORS settings, and mounts the healthcheck, authentication, and project routers.
 
-Requests flow from route files into validators, middleware, and controller functions. Controllers use Mongoose models to read and write MongoDB documents, then return a consistent `ApiResponse` object. Errors are represented with `ApiError`, async route handlers are wrapped by `asyncHandler`, and a centralized error-handling middleware (last `app.use` in `src/app.js`) serializes `ApiError` instances, Mongoose `ValidationError`/`CastError`, and BSON `ObjectId` cast errors into consistent JSON instead of falling through to Express's default HTML error page.
+Requests flow from route files into validators, middleware, and controller functions. Controllers use Mongoose models to read and write MongoDB documents, then return a consistent `ApiResponse` object. Errors are represented with `ApiError`, async route handlers are wrapped by `asyncHandler`, and a centralized error-handling middleware (last `app.use` in `src/app.js`) serializes `ApiError` instances, Multer upload errors (413 for oversized files, 400 otherwise), Mongo duplicate-key conflicts (409), Mongoose `ValidationError`/`CastError`, and BSON `ObjectId` cast errors into consistent JSON instead of falling through to Express's default HTML error page. Ordering in that handler is load-bearing: `ApiError` is matched first, so a 415 raised by the upload filter keeps the standard envelope.
 
 Authentication is based on signed JWT access and refresh tokens. Passwords are hashed in the user model before save, refresh tokens are stored on the user document, and protected routes use `verifyJWT` to load the authenticated user from either an HTTP-only cookie or a bearer token.
 
-Project access is modeled through the `ProjectMember` collection, which connects users to projects with one of three roles: `admin`, `project_admin`, or `member`. Route-level `validateProjectPermission` middleware enforces which roles may reach each project/task/note endpoint; `updateSubTask` additionally branches in the controller so any project role can toggle a subtask's `isCompleted` while only `admin`/`project_admin` can rename it. This RBAC behavior, including cross-project access denial, is exercised by `scripts/verify.mjs`.
+Project access is modeled through the `ProjectMember` collection, which connects users to projects with one of three roles: `admin`, `project_admin`, or `member`. Route-level `validateProjectPermission` middleware enforces which roles may reach each project/task/note endpoint; `updateSubTask` additionally branches in the controller so any project role can toggle a subtask's `isCompleted` while only `admin`/`project_admin` can rename it. Authorization is enforced twice over: `validateProjectPermission` decides whether the caller may reach the project at all, and each controller then scopes its query to that same `projectId` so a child resource belonging to a different project cannot be reached through it. This RBAC behavior, including cross-project access denial, is exercised by `scripts/verify.mjs`.
 
 ## Screenshots
 
