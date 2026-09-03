@@ -46,6 +46,7 @@ test("V1 backend smoke test", async (t) => {
   const createdProjectIds = [];
   const createdUserIds = [];
   const createdTaskIds = [];
+  const uploadedFiles = [];
 
   try {
     let adminToken, memberToken, adminId, memberId;
@@ -176,9 +177,45 @@ test("V1 backend smoke test", async (t) => {
       taskId = c.json.data._id;
       createdTaskIds.push(taskId);
       assert.equal(c.json.data.attachments.length, 1);
+      uploadedFiles.push(c.json.data.attachments[0].url.split("/").pop());
 
       const fileRes = await fetch(c.json.data.attachments[0].url);
       assert.equal(fileRes.status, 200, `attachment URL not reachable: ${c.json.data.attachments[0].url}`);
+    });
+
+    await t.test("upload allowlist refuses executable content", async () => {
+      const svg = new FormData();
+      svg.append("title", "svg payload");
+      svg.append(
+        "attachments",
+        new Blob(['<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'], {
+          type: "image/svg+xml",
+        }),
+        "payload.svg",
+      );
+      const r1 = await api(`/tasks/${projectId}`, {
+        method: "POST",
+        token: adminToken,
+        form: svg,
+      });
+      assert.equal(r1.status, 415, JSON.stringify(r1.json));
+
+      // A permitted MIME type paired with a dangerous extension is also refused,
+      // since the client controls the MIME header but the extension decides how
+      // a browser would treat the file if it were ever served.
+      const spoofed = new FormData();
+      spoofed.append("title", "spoofed mime");
+      spoofed.append(
+        "attachments",
+        new Blob(["<h1>hello</h1>"], { type: "text/plain" }),
+        "payload.html",
+      );
+      const r2 = await api(`/tasks/${projectId}`, {
+        method: "POST",
+        token: adminToken,
+        form: spoofed,
+      });
+      assert.equal(r2.status, 415, JSON.stringify(r2.json));
     });
 
     await t.test("getTaskById aggregation populates assignedTo", async () => {
@@ -390,12 +427,11 @@ test("V1 backend smoke test", async (t) => {
     await db.collection("projectnotes").deleteMany({ project: { $in: projectObjIds } });
     await db.collection("users").deleteMany({ _id: { $in: userObjIds } });
 
+    // Filenames are randomised server-side, so clean up by the exact names the
+    // API handed back rather than by guessing at a suffix.
     const imagesDir = path.resolve("public/images");
-    const files = await fs.readdir(imagesDir).catch(() => []);
-    for (const f of files) {
-      if (f.endsWith("-verify-note.txt")) {
-        await fs.unlink(path.join(imagesDir, f)).catch(() => {});
-      }
+    for (const name of uploadedFiles) {
+      await fs.unlink(path.join(imagesDir, name)).catch(() => {});
     }
 
     await mongoose.disconnect();

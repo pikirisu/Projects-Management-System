@@ -1,13 +1,31 @@
 import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
+import multer from "multer";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const app = express();
+
+const publicDir = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../public",
+);
 
 // basic configurations
 app.use(express.json({ limit: "16kb" }));
 app.use(express.urlencoded({ extended: true, limit: "16kb" }));
-app.use(express.static("public"));
+app.use(
+    express.static(publicDir, {
+        setHeaders: (res) => {
+            // Everything under public/ is user-uploaded. Force a download and
+            // forbid MIME sniffing so an uploaded file can never be executed as
+            // same-origin script, even if it slips past the upload allowlist.
+            res.setHeader("Content-Disposition", "attachment");
+            res.setHeader("X-Content-Type-Options", "nosniff");
+        },
+    }),
+);
 app.use(cookieParser());
 
 // cors configurations
@@ -48,6 +66,19 @@ app.use((err, req, res, next) => {
             message: err.message,
             success: err.success,
             errors: err.errors,
+        });
+    }
+
+    // Multer rejects oversized or disallowed uploads with its own error type,
+    // which would otherwise surface as an opaque 500.
+    if (err instanceof multer.MulterError) {
+        const statusCode = err.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+        return res.status(statusCode).json({
+            statusCode,
+            data: null,
+            message: err.message,
+            success: false,
+            errors: err.field ? [{ [err.field]: err.code }] : [],
         });
     }
 
