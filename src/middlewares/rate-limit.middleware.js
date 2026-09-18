@@ -30,7 +30,10 @@ export const globalLimiter = rateLimit({
 // endpoints. Deliberately far stricter than the global limiter.
 export const authLimiter = rateLimit({
     ...shared,
-    windowMs: toPositiveInt(process.env.AUTH_RATE_LIMIT_WINDOW_MS, 15 * 60 * 1000),
+    windowMs: toPositiveInt(
+        process.env.AUTH_RATE_LIMIT_WINDOW_MS,
+        15 * 60 * 1000,
+    ),
     limit: toPositiveInt(process.env.AUTH_RATE_LIMIT_MAX, 20),
     message: "Too many authentication attempts, please try again later",
     skipSuccessfulRequests: true,

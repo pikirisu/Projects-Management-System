@@ -26,18 +26,18 @@ Backend One is a Node.js and Express REST API for project-management workflows. 
 
 ## Tech Stack
 
-| Category | Technology |
-| --- | --- |
-| Languages | JavaScript, Node.js |
-| Frameworks | Express |
-| Database | MongoDB |
-| ODM | Mongoose |
-| Authentication | JSON Web Tokens, bcrypt |
-| Validation | express-validator |
-| Email | Nodemailer, Mailgen, Mailtrap-style SMTP configuration |
-| File Uploads | Multer |
-| Middleware | cookie-parser, cors, dotenv |
-| Tools | npm, nodemon, Prettier |
+| Category       | Technology                                             |
+| -------------- | ------------------------------------------------------ |
+| Languages      | JavaScript, Node.js                                    |
+| Frameworks     | Express                                                |
+| Database       | MongoDB                                                |
+| ODM            | Mongoose                                               |
+| Authentication | JSON Web Tokens, bcrypt                                |
+| Validation     | express-validator                                      |
+| Email          | Nodemailer, Mailgen, Mailtrap-style SMTP configuration |
+| File Uploads   | Multer                                                 |
+| Middleware     | cookie-parser, cors, dotenv                            |
+| Tools          | npm, nodemon, Prettier                                 |
 
 ## Project Structure
 
@@ -87,28 +87,28 @@ npm install
 
 The application loads environment variables from `.env` in the project root.
 
-| Variable | Required | Used By | Description |
-| --- | --- | --- | --- |
-| `MONGO_URI` | Yes | `src/db/index.js` | MongoDB connection string. |
-| `PORT` | No | `src/index.js` | Server port. Defaults to `3000`. |
-| `CORS_ORIGIN` | No | `src/app.js` | Comma-separated list of allowed origins. Unset or `*` reflects the caller's origin and logs a startup warning, since `*` alongside `credentials: true` lets any site send authenticated requests. |
-| `ACCESS_TOKEN_SECRET` | Yes | User model, auth middleware | Secret used to sign and verify access tokens. |
-| `ACCESS_TOKEN_EXPIRY` | Yes | User model | Access-token lifetime, such as `1d` or `15m`. |
-| `REFRESH_TOKEN_SECRET` | Yes | User model, auth controller | Secret used to sign and verify refresh tokens. |
-| `REFRESH_TOKEN_EXPIRY` | Yes | User model | Refresh-token lifetime, such as `10d`. |
-| `FORGOT_PASSWORD_REDIRECT_URL` | Yes | Auth controller | Frontend URL used to build password-reset links. |
-| `MAILTRAP_SMTP_HOST` | Yes, for email | Mail utility | SMTP host for outgoing verification/reset emails. |
-| `MAILTRAP_SMTP_PORT` | Yes, for email | Mail utility | SMTP port for outgoing email. |
-| `MAILTRAP_SMTP_USER` | Yes, for email | Mail utility | SMTP username. |
-| `MAILTRAP_SMTP_PASS` | Yes, for email | Mail utility | SMTP password. |
-| `SERVER_URL` | Yes | Task controller | Base URL used to build task attachment links (e.g. `http://localhost:8000`). Also used by `scripts/verify.mjs`. |
-| `NODE_ENV` | No | Cookie options | When set to `production`, auth cookies are sent with `secure: true`. Leave unset for local HTTP testing. |
-| `COOKIE_SAMESITE` | No | Cookie options | `strict` (default), `lax`, or `none`. Use `none` only for a cross-site frontend; it forces `secure: true` regardless of `NODE_ENV`. |
-| `REQUIRE_EMAIL_VERIFICATION` | No | Auth controller | When `"true"`, login rejects users whose email is unverified with a 403. Defaults to off. |
-| `RATE_LIMIT_ENABLED` | No | Rate limit middleware | Set to `"false"` to disable all rate limiting. Needed when running `scripts/verify.mjs` repeatedly. |
-| `RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW_MS` | No | Rate limit middleware | Global budget per IP. Defaults to 300 requests per 15 minutes. |
-| `AUTH_RATE_LIMIT_MAX` / `AUTH_RATE_LIMIT_WINDOW_MS` | No | Rate limit middleware | Budget for auth endpoints. Defaults to 20 *failed* attempts per 15 minutes; successful logins are not counted. |
-| `TRUST_PROXY` | No | `src/app.js` | Number of proxy hops to trust. Required behind a reverse proxy so rate limiting sees the real client IP. Leave unset locally. |
+| Variable                                            | Required       | Used By                     | Description                                                                                                                                                                                       |
+| --------------------------------------------------- | -------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MONGO_URI`                                         | Yes            | `src/db/index.js`           | MongoDB connection string.                                                                                                                                                                        |
+| `PORT`                                              | No             | `src/index.js`              | Server port. Defaults to `3000`.                                                                                                                                                                  |
+| `CORS_ORIGIN`                                       | No             | `src/app.js`                | Comma-separated list of allowed origins. Unset or `*` reflects the caller's origin and logs a startup warning, since `*` alongside `credentials: true` lets any site send authenticated requests. |
+| `ACCESS_TOKEN_SECRET`                               | Yes            | User model, auth middleware | Secret used to sign and verify access tokens.                                                                                                                                                     |
+| `ACCESS_TOKEN_EXPIRY`                               | Yes            | User model                  | Access-token lifetime, such as `1d` or `15m`.                                                                                                                                                     |
+| `REFRESH_TOKEN_SECRET`                              | Yes            | User model, auth controller | Secret used to sign and verify refresh tokens.                                                                                                                                                    |
+| `REFRESH_TOKEN_EXPIRY`                              | Yes            | User model                  | Refresh-token lifetime, such as `10d`.                                                                                                                                                            |
+| `FORGOT_PASSWORD_REDIRECT_URL`                      | Yes            | Auth controller             | Frontend URL used to build password-reset links.                                                                                                                                                  |
+| `MAILTRAP_SMTP_HOST`                                | Yes, for email | Mail utility                | SMTP host for outgoing verification/reset emails.                                                                                                                                                 |
+| `MAILTRAP_SMTP_PORT`                                | Yes, for email | Mail utility                | SMTP port for outgoing email.                                                                                                                                                                     |
+| `MAILTRAP_SMTP_USER`                                | Yes, for email | Mail utility                | SMTP username.                                                                                                                                                                                    |
+| `MAILTRAP_SMTP_PASS`                                | Yes, for email | Mail utility                | SMTP password.                                                                                                                                                                                    |
+| `SERVER_URL`                                        | Yes            | Task controller             | Base URL used to build task attachment links (e.g. `http://localhost:8000`). Also used by `scripts/verify.mjs`.                                                                                   |
+| `NODE_ENV`                                          | No             | Cookie options              | When set to `production`, auth cookies are sent with `secure: true`. Leave unset for local HTTP testing.                                                                                          |
+| `COOKIE_SAMESITE`                                   | No             | Cookie options              | `strict` (default), `lax`, or `none`. Use `none` only for a cross-site frontend; it forces `secure: true` regardless of `NODE_ENV`.                                                               |
+| `REQUIRE_EMAIL_VERIFICATION`                        | No             | Auth controller             | When `"true"`, login rejects users whose email is unverified with a 403. Defaults to off.                                                                                                         |
+| `RATE_LIMIT_ENABLED`                                | No             | Rate limit middleware       | Set to `"false"` to disable all rate limiting. Needed when running `scripts/verify.mjs` repeatedly.                                                                                               |
+| `RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW_MS`           | No             | Rate limit middleware       | Global budget per IP. Defaults to 300 requests per 15 minutes.                                                                                                                                    |
+| `AUTH_RATE_LIMIT_MAX` / `AUTH_RATE_LIMIT_WINDOW_MS` | No             | Rate limit middleware       | Budget for auth endpoints. Defaults to 20 _failed_ attempts per 15 minutes; successful logins are not counted.                                                                                    |
+| `TRUST_PROXY`                                       | No             | `src/app.js`                | Number of proxy hops to trust. Required behind a reverse proxy so rate limiting sees the real client IP. Leave unset locally.                                                                     |
 
 Example `.env` shape:
 
@@ -163,42 +163,42 @@ http://localhost:3000
 
 The current Express app mounts routes under `/api/v1` for health checks, authentication, and projects.
 
-| Method | Endpoint | Auth Required | Description |
-| --- | --- | --- | --- |
-| `GET` | `/` | No | Returns a welcome message. |
-| `GET` | `/api/v1/healthcheck` | No | Returns server health status. |
-| `POST` | `/api/v1/auth/register` | No | Registers a user and sends an email verification message. |
-| `POST` | `/api/v1/auth/login` | No | Authenticates a user and returns access/refresh tokens. |
-| `GET` | `/api/v1/auth/verify-email/:verificationToken` | No | Verifies a user's email with a temporary token. |
-| `POST` | `/api/v1/auth/refresh-token` | No | Refreshes the access token using a refresh token from cookies or the request body. |
-| `POST` | `/api/v1/auth/forgot-password` | No | Sends a password-reset email for a registered account. |
-| `POST` | `/api/v1/auth/reset-password/:resetToken` | No | Resets a password using a temporary reset token. |
-| `POST` | `/api/v1/auth/logout` | Yes | Clears stored refresh token and auth cookies. |
-| `GET` | `/api/v1/auth/current-user` | Yes | Returns the authenticated user. |
-| `POST` | `/api/v1/auth/change-password` | Yes | Changes the authenticated user's password. |
-| `POST` | `/api/v1/auth/resend-email-verification` | Yes | Sends another email verification message. |
-| `GET` | `/api/v1/projects` | Yes | Lists projects associated with the authenticated user. |
-| `POST` | `/api/v1/projects` | Yes | Creates a project and adds the creator as an admin member. |
-| `GET` | `/api/v1/projects/:projectId` | Yes | Gets a project by ID. |
-| `PUT` | `/api/v1/projects/:projectId` | Yes | Updates a project by ID. Intended for admin users. |
-| `DELETE` | `/api/v1/projects/:projectId` | Yes | Deletes a project by ID. Intended for admin users. |
-| `GET` | `/api/v1/projects/:projectId/members` | Yes | Lists members for a project. |
-| `POST` | `/api/v1/projects/:projectId/members` | Yes | Adds or updates a project member by email and role. Intended for admin users. |
-| `PUT` | `/api/v1/projects/:projectId/members/:userId` | Yes | Updates a project member role. Admin only. |
-| `DELETE` | `/api/v1/projects/:projectId/members/:userId` | Yes | Removes a user from a project. Admin only. |
-| `GET` | `/api/v1/tasks/:projectId` | Yes | Lists tasks in a project. Any project role. |
-| `POST` | `/api/v1/tasks/:projectId` | Yes | Creates a task, optionally with file attachments (multipart `attachments` field). Admin/project_admin only. |
-| `GET` | `/api/v1/tasks/:projectId/t/:taskId` | Yes | Gets a task by ID, with assignee and subtasks populated. Any project role. |
-| `PUT` | `/api/v1/tasks/:projectId/t/:taskId` | Yes | Updates a task; new attachments are appended. Admin/project_admin only. |
-| `DELETE` | `/api/v1/tasks/:projectId/t/:taskId` | Yes | Deletes a task and its subtasks. Admin/project_admin only. |
-| `POST` | `/api/v1/tasks/:projectId/t/:taskId/subtasks` | Yes | Creates a subtask. Admin/project_admin only. |
-| `PUT` | `/api/v1/tasks/:projectId/st/:subTaskId` | Yes | Updates a subtask. Any project role may toggle `isCompleted`; only admin/project_admin may change `title`. |
-| `DELETE` | `/api/v1/tasks/:projectId/st/:subTaskId` | Yes | Deletes a subtask. Admin/project_admin only. |
-| `GET` | `/api/v1/notes/:projectId` | Yes | Lists notes in a project. Any project role. |
-| `POST` | `/api/v1/notes/:projectId` | Yes | Creates a note. Admin only. |
-| `GET` | `/api/v1/notes/:projectId/n/:noteId` | Yes | Gets a note by ID. Any project role. |
-| `PUT` | `/api/v1/notes/:projectId/n/:noteId` | Yes | Updates a note. Admin only. |
-| `DELETE` | `/api/v1/notes/:projectId/n/:noteId` | Yes | Deletes a note. Admin only. |
+| Method   | Endpoint                                       | Auth Required | Description                                                                                                 |
+| -------- | ---------------------------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------- |
+| `GET`    | `/`                                            | No            | Returns a welcome message.                                                                                  |
+| `GET`    | `/api/v1/healthcheck`                          | No            | Returns server health status.                                                                               |
+| `POST`   | `/api/v1/auth/register`                        | No            | Registers a user and sends an email verification message.                                                   |
+| `POST`   | `/api/v1/auth/login`                           | No            | Authenticates a user and returns access/refresh tokens.                                                     |
+| `GET`    | `/api/v1/auth/verify-email/:verificationToken` | No            | Verifies a user's email with a temporary token.                                                             |
+| `POST`   | `/api/v1/auth/refresh-token`                   | No            | Refreshes the access token using a refresh token from cookies or the request body.                          |
+| `POST`   | `/api/v1/auth/forgot-password`                 | No            | Sends a password-reset email for a registered account.                                                      |
+| `POST`   | `/api/v1/auth/reset-password/:resetToken`      | No            | Resets a password using a temporary reset token.                                                            |
+| `POST`   | `/api/v1/auth/logout`                          | Yes           | Clears stored refresh token and auth cookies.                                                               |
+| `GET`    | `/api/v1/auth/current-user`                    | Yes           | Returns the authenticated user.                                                                             |
+| `POST`   | `/api/v1/auth/change-password`                 | Yes           | Changes the authenticated user's password.                                                                  |
+| `POST`   | `/api/v1/auth/resend-email-verification`       | Yes           | Sends another email verification message.                                                                   |
+| `GET`    | `/api/v1/projects`                             | Yes           | Lists projects associated with the authenticated user.                                                      |
+| `POST`   | `/api/v1/projects`                             | Yes           | Creates a project and adds the creator as an admin member.                                                  |
+| `GET`    | `/api/v1/projects/:projectId`                  | Yes           | Gets a project by ID.                                                                                       |
+| `PUT`    | `/api/v1/projects/:projectId`                  | Yes           | Updates a project by ID. Intended for admin users.                                                          |
+| `DELETE` | `/api/v1/projects/:projectId`                  | Yes           | Deletes a project by ID. Intended for admin users.                                                          |
+| `GET`    | `/api/v1/projects/:projectId/members`          | Yes           | Lists members for a project.                                                                                |
+| `POST`   | `/api/v1/projects/:projectId/members`          | Yes           | Adds or updates a project member by email and role. Intended for admin users.                               |
+| `PUT`    | `/api/v1/projects/:projectId/members/:userId`  | Yes           | Updates a project member role. Admin only.                                                                  |
+| `DELETE` | `/api/v1/projects/:projectId/members/:userId`  | Yes           | Removes a user from a project. Admin only.                                                                  |
+| `GET`    | `/api/v1/tasks/:projectId`                     | Yes           | Lists tasks in a project. Any project role.                                                                 |
+| `POST`   | `/api/v1/tasks/:projectId`                     | Yes           | Creates a task, optionally with file attachments (multipart `attachments` field). Admin/project_admin only. |
+| `GET`    | `/api/v1/tasks/:projectId/t/:taskId`           | Yes           | Gets a task by ID, with assignee and subtasks populated. Any project role.                                  |
+| `PUT`    | `/api/v1/tasks/:projectId/t/:taskId`           | Yes           | Updates a task; new attachments are appended. Admin/project_admin only.                                     |
+| `DELETE` | `/api/v1/tasks/:projectId/t/:taskId`           | Yes           | Deletes a task and its subtasks. Admin/project_admin only.                                                  |
+| `POST`   | `/api/v1/tasks/:projectId/t/:taskId/subtasks`  | Yes           | Creates a subtask. Admin/project_admin only.                                                                |
+| `PUT`    | `/api/v1/tasks/:projectId/st/:subTaskId`       | Yes           | Updates a subtask. Any project role may toggle `isCompleted`; only admin/project_admin may change `title`.  |
+| `DELETE` | `/api/v1/tasks/:projectId/st/:subTaskId`       | Yes           | Deletes a subtask. Admin/project_admin only.                                                                |
+| `GET`    | `/api/v1/notes/:projectId`                     | Yes           | Lists notes in a project. Any project role.                                                                 |
+| `POST`   | `/api/v1/notes/:projectId`                     | Yes           | Creates a note. Admin only.                                                                                 |
+| `GET`    | `/api/v1/notes/:projectId/n/:noteId`           | Yes           | Gets a note by ID. Any project role.                                                                        |
+| `PUT`    | `/api/v1/notes/:projectId/n/:noteId`           | Yes           | Updates a note. Admin only.                                                                                 |
+| `DELETE` | `/api/v1/notes/:projectId/n/:noteId`           | Yes           | Deletes a note. Admin only.                                                                                 |
 
 ## Architecture Overview
 
@@ -214,10 +214,10 @@ Project access is modeled through the `ProjectMember` collection, which connects
 
 This is a backend API project, so no application UI screenshots are available in the repository.
 
-| Screenshot | Placeholder |
-| --- | --- |
-| API client example | Add a Postman, Insomnia, or curl screenshot here. |
-| MongoDB collections | Add a database screenshot here if useful. |
+| Screenshot          | Placeholder                                       |
+| ------------------- | ------------------------------------------------- |
+| API client example  | Add a Postman, Insomnia, or curl screenshot here. |
+| MongoDB collections | Add a database screenshot here if useful.         |
 
 ## Testing / Verification
 
@@ -238,7 +238,7 @@ otherwise exhaust the auth budget after a few consecutive runs.
   so the response cannot be used to probe whether a resource exists in another project.
   `scripts/verify.mjs` covers this directly.
 - **Upload allowlist.** `src/middlewares/multer.middleware.js` accepts a file only when its MIME
-  type is known *and* its extension belongs to that type, which also rejects double-extension
+  type is known _and_ its extension belongs to that type, which also rejects double-extension
   tricks like `a.txt.html`. SVG is deliberately excluded because it can carry inline `<script>`.
   Stored filenames are random UUIDs, and everything under `public/` is served with
   `Content-Disposition: attachment` and `X-Content-Type-Options: nosniff`.
