@@ -1,0 +1,13 @@
+# This repo is developed on Windows and deployed to Linux. Pin line endings so
+# the bytes in a commit are the same bytes CI and the production host check out,
+# rather than depending on each contributor's core.autocrlf setting.
+* text=auto eol=lf
+
+# Never touch binaries.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.pdf binary
+*.ico binary
