@@ -10,8 +10,12 @@ const port = process.env.PORT || 3000;
 
 connectDB()
     .then(() => {
-        app.listen(port, () => {
-            console.log(`Example app listening on port http://localhost:${port}`);
+        // Bind all interfaces explicitly. Node would already do this by default,
+        // but a container or PaaS routes traffic to the container's own address,
+        // not loopback -- so making it explicit removes any doubt about why a
+        // deployed service is unreachable while the logs say it started fine.
+        app.listen(port, "0.0.0.0", () => {
+            console.log(`Server listening on port ${port}`);
         });
     })
     .catch((err) => {

@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    name: Lint, boot, and end-to-end verify
+    runs-on: ubuntu-latest
+
+    # A real MongoDB, so scripts/verify.mjs exercises the actual aggregation
+    # pipelines and unique indexes rather than a mock.
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.runCommand(\"ping\").ok' --quiet"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      MONGO_URI: mongodb://localhost:27017/backend_one_ci
+      PORT: 3000
+      SERVER_URL: http://localhost:3000
+      ACCESS_TOKEN_SECRET: ci-only-access-secret-not-used-anywhere-real
+      ACCESS_TOKEN_EXPIRY: 1d
+      REFRESH_TOKEN_SECRET: ci-only-refresh-secret-not-used-anywhere-real
+      REFRESH_TOKEN_EXPIRY: 10d
+      FORGOT_PASSWORD_REDIRECT_URL: http://localhost:5173/reset-password
+      # verify.mjs makes several auth calls per run and would otherwise exhaust
+      # the auth budget mid-suite.
+      RATE_LIMIT_ENABLED: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check formatting
+        run: npm run format:check
+
+      # The load-bearing step. This repo is developed on Windows, whose
+      # filesystem is case-insensitive: an import of "../utils/api-error.js"
+      # resolves happily against a file committed as "Api-Error.js". On Linux it
+      # does not, and the server dies with ERR_MODULE_NOT_FOUND before it can
+      # bind a port. Importing the whole module graph on a case-sensitive
+      # runner is what makes that class of bug impossible to merge.
+      - name: Boot check (case-sensitive module graph)
+        run: npm run boot-check
+
+      - name: Start server
+        run: npm start &
+
+      - name: Wait for server to report healthy
+        # /api/v1/healthcheck returns 503 until Mongo is actually connected, so
+        # polling it for a 200 is a genuine readiness gate, not just a liveness one.
+        run: |
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/api/v1/healthcheck || true)
+            if [ "$code" = "200" ]; then echo "healthy after ${i}s"; exit 0; fi
+            sleep 1
+          done
+          echo "server did not become healthy in 30s"
+          curl -s http://localhost:3000/api/v1/healthcheck || true
+          exit 1
+
+      - name: End-to-end verify (RBAC, IDOR, upload allowlist)
+        run: npm run verify
