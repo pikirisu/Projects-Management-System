@@ -1,0 +1,22 @@
+@import "tailwindcss";
+
+/*
+ * Tailwind v4's `dark:` variant follows prefers-color-scheme by default, so the
+ * palette is expressed entirely in `dark:` utilities on components. Declaring
+ * color-scheme here is what makes the browser's own chrome -- form controls,
+ * scrollbars, the canvas behind the page -- follow along.
+ */
+:root {
+    color-scheme: light dark;
+}
+
+html,
+body,
+#root {
+    height: 100%;
+}
+
+body {
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+}
