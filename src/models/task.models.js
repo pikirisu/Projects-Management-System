@@ -33,6 +33,15 @@ const taskSchema = new Schema(
                     url: String,
                     mimetype: String,
                     size: Number,
+                    // Which driver in src/utils/storage.js wrote this blob, and
+                    // the handle it needs to delete it again (a Cloudinary
+                    // public_id, or a filename under public/images). Without
+                    // these, deleting a task would orphan its files forever.
+                    // Absent on rows written before the storage layer existed,
+                    // which deleteAttachments() skips rather than failing on.
+                    provider: String,
+                    key: String,
+                    resourceType: String,
                 },
             ],
             default: [],

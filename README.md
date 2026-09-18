@@ -14,12 +14,13 @@ Backend One is a Node.js and Express REST API for project-management workflows. 
 - JWT authentication middleware that reads the access token from cookies or the `Authorization` header.
 - Project creation, listing, lookup, update, and deletion route handlers.
 - Project-member add, list, role-update, and removal route handlers, all requiring project membership.
-- Task CRUD, task assignment, status tracking, and multi-file attachment uploads (via Multer, stored under `public/images`).
+- Task CRUD, task assignment, status tracking, and multi-file attachment uploads (via Multer, stored in Cloudinary when configured and on local disk otherwise).
 - Subtask CRUD, with member access limited to toggling completion (only admin/project_admin can create, delete, or rename subtasks).
 - Project notes CRUD, restricted to admin for create/update/delete; all project roles can read.
 - Mongoose schemas for users, projects, project members, tasks, subtasks, and project notes.
 - Project-scoped resource authorization: task, subtask, and note lookups are constrained to the project in the URL, not just the child's own id.
 - Upload allowlist (MIME plus extension must agree), randomised stored filenames, and uploads served as non-executable attachments.
+- Cascading project deletes: removing a project also removes its members, tasks, subtasks, notes, and stored attachment blobs.
 - Security headers via `helmet`, and per-IP rate limiting with a stricter budget on authentication endpoints.
 - Hardened auth cookies (`httpOnly`, `SameSite`, and a `maxAge` matching the token's own expiry).
 - Centralized JSON error handling for `ApiError`, Multer upload errors, Mongo duplicate keys, Mongoose validation/cast errors, and malformed ObjectIds.
@@ -35,7 +36,7 @@ Backend One is a Node.js and Express REST API for project-management workflows. 
 | Authentication | JSON Web Tokens, bcrypt                                |
 | Validation     | express-validator                                      |
 | Email          | Nodemailer, Mailgen, Mailtrap-style SMTP configuration |
-| File Uploads   | Multer                                                 |
+| File Uploads   | Multer, Cloudinary                                     |
 | Middleware     | cookie-parser, cors, dotenv                            |
 | Tools          | npm, nodemon, Prettier                                 |
 
@@ -87,28 +88,29 @@ npm install
 
 The application loads environment variables from `.env` in the project root.
 
-| Variable                                            | Required       | Used By                     | Description                                                                                                                                                                                       |
-| --------------------------------------------------- | -------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MONGO_URI`                                         | Yes            | `src/db/index.js`           | MongoDB connection string.                                                                                                                                                                        |
-| `PORT`                                              | No             | `src/index.js`              | Server port. Defaults to `3000`.                                                                                                                                                                  |
-| `CORS_ORIGIN`                                       | No             | `src/app.js`                | Comma-separated list of allowed origins. Unset or `*` reflects the caller's origin and logs a startup warning, since `*` alongside `credentials: true` lets any site send authenticated requests. |
-| `ACCESS_TOKEN_SECRET`                               | Yes            | User model, auth middleware | Secret used to sign and verify access tokens.                                                                                                                                                     |
-| `ACCESS_TOKEN_EXPIRY`                               | Yes            | User model                  | Access-token lifetime, such as `1d` or `15m`.                                                                                                                                                     |
-| `REFRESH_TOKEN_SECRET`                              | Yes            | User model, auth controller | Secret used to sign and verify refresh tokens.                                                                                                                                                    |
-| `REFRESH_TOKEN_EXPIRY`                              | Yes            | User model                  | Refresh-token lifetime, such as `10d`.                                                                                                                                                            |
-| `FORGOT_PASSWORD_REDIRECT_URL`                      | Yes            | Auth controller             | Frontend URL used to build password-reset links.                                                                                                                                                  |
-| `MAILTRAP_SMTP_HOST`                                | Yes, for email | Mail utility                | SMTP host for outgoing verification/reset emails.                                                                                                                                                 |
-| `MAILTRAP_SMTP_PORT`                                | Yes, for email | Mail utility                | SMTP port for outgoing email.                                                                                                                                                                     |
-| `MAILTRAP_SMTP_USER`                                | Yes, for email | Mail utility                | SMTP username.                                                                                                                                                                                    |
-| `MAILTRAP_SMTP_PASS`                                | Yes, for email | Mail utility                | SMTP password.                                                                                                                                                                                    |
-| `SERVER_URL`                                        | Yes            | Task controller             | Base URL used to build task attachment links (e.g. `http://localhost:8000`). Also used by `scripts/verify.mjs`.                                                                                   |
-| `NODE_ENV`                                          | No             | Cookie options              | When set to `production`, auth cookies are sent with `secure: true`. Leave unset for local HTTP testing.                                                                                          |
-| `COOKIE_SAMESITE`                                   | No             | Cookie options              | `strict` (default), `lax`, or `none`. Use `none` only for a cross-site frontend; it forces `secure: true` regardless of `NODE_ENV`.                                                               |
-| `REQUIRE_EMAIL_VERIFICATION`                        | No             | Auth controller             | When `"true"`, login rejects users whose email is unverified with a 403. Defaults to off.                                                                                                         |
-| `RATE_LIMIT_ENABLED`                                | No             | Rate limit middleware       | Set to `"false"` to disable all rate limiting. Needed when running `scripts/verify.mjs` repeatedly.                                                                                               |
-| `RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW_MS`           | No             | Rate limit middleware       | Global budget per IP. Defaults to 300 requests per 15 minutes.                                                                                                                                    |
-| `AUTH_RATE_LIMIT_MAX` / `AUTH_RATE_LIMIT_WINDOW_MS` | No             | Rate limit middleware       | Budget for auth endpoints. Defaults to 20 _failed_ attempts per 15 minutes; successful logins are not counted.                                                                                    |
-| `TRUST_PROXY`                                       | No             | `src/app.js`                | Number of proxy hops to trust. Required behind a reverse proxy so rate limiting sees the real client IP. Leave unset locally.                                                                     |
+| Variable                                                                 | Required           | Used By                     | Description                                                                                                                                                                                       |
+| ------------------------------------------------------------------------ | ------------------ | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MONGO_URI`                                                              | Yes                | `src/db/index.js`           | MongoDB connection string.                                                                                                                                                                        |
+| `PORT`                                                                   | No                 | `src/index.js`              | Server port. Defaults to `3000`.                                                                                                                                                                  |
+| `CORS_ORIGIN`                                                            | No                 | `src/app.js`                | Comma-separated list of allowed origins. Unset or `*` reflects the caller's origin and logs a startup warning, since `*` alongside `credentials: true` lets any site send authenticated requests. |
+| `ACCESS_TOKEN_SECRET`                                                    | Yes                | User model, auth middleware | Secret used to sign and verify access tokens.                                                                                                                                                     |
+| `ACCESS_TOKEN_EXPIRY`                                                    | Yes                | User model                  | Access-token lifetime, such as `1d` or `15m`.                                                                                                                                                     |
+| `REFRESH_TOKEN_SECRET`                                                   | Yes                | User model, auth controller | Secret used to sign and verify refresh tokens.                                                                                                                                                    |
+| `REFRESH_TOKEN_EXPIRY`                                                   | Yes                | User model                  | Refresh-token lifetime, such as `10d`.                                                                                                                                                            |
+| `FORGOT_PASSWORD_REDIRECT_URL`                                           | Yes                | Auth controller             | Frontend URL used to build password-reset links.                                                                                                                                                  |
+| `MAILTRAP_SMTP_HOST`                                                     | Yes, for email     | Mail utility                | SMTP host for outgoing verification/reset emails.                                                                                                                                                 |
+| `MAILTRAP_SMTP_PORT`                                                     | Yes, for email     | Mail utility                | SMTP port for outgoing email.                                                                                                                                                                     |
+| `MAILTRAP_SMTP_USER`                                                     | Yes, for email     | Mail utility                | SMTP username.                                                                                                                                                                                    |
+| `MAILTRAP_SMTP_PASS`                                                     | Yes, for email     | Mail utility                | SMTP password.                                                                                                                                                                                    |
+| `SERVER_URL`                                                             | Yes                | Storage util                | Base URL used to build attachment links for the local storage driver (e.g. `http://localhost:8000`). Also used by `scripts/verify.mjs`.                                                           |
+| `CLOUDINARY_CLOUD_NAME` / `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | Yes, in production | Storage util                | When all three are set, attachments upload to Cloudinary. With any missing, the app writes to `public/images` instead. Required on any deployed host, whose filesystem is ephemeral.              |
+| `NODE_ENV`                                                               | No                 | Cookie options              | When set to `production`, auth cookies are sent with `secure: true`. Leave unset for local HTTP testing.                                                                                          |
+| `COOKIE_SAMESITE`                                                        | No                 | Cookie options              | `strict` (default), `lax`, or `none`. Use `none` only for a cross-site frontend; it forces `secure: true` regardless of `NODE_ENV`.                                                               |
+| `REQUIRE_EMAIL_VERIFICATION`                                             | No                 | Auth controller             | When `"true"`, login rejects users whose email is unverified with a 403. Defaults to off.                                                                                                         |
+| `RATE_LIMIT_ENABLED`                                                     | No                 | Rate limit middleware       | Set to `"false"` to disable all rate limiting. Needed when running `scripts/verify.mjs` repeatedly.                                                                                               |
+| `RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW_MS`                                | No                 | Rate limit middleware       | Global budget per IP. Defaults to 300 requests per 15 minutes.                                                                                                                                    |
+| `AUTH_RATE_LIMIT_MAX` / `AUTH_RATE_LIMIT_WINDOW_MS`                      | No                 | Rate limit middleware       | Budget for auth endpoints. Defaults to 20 _failed_ attempts per 15 minutes; successful logins are not counted.                                                                                    |
+| `TRUST_PROXY`                                                            | No                 | `src/app.js`                | Number of proxy hops to trust. Required behind a reverse proxy so rate limiting sees the real client IP. Leave unset locally.                                                                     |
 
 Example `.env` shape:
 
@@ -181,7 +183,7 @@ The current Express app mounts routes under `/api/v1` for health checks, authent
 | `POST`   | `/api/v1/projects`                             | Yes           | Creates a project and adds the creator as an admin member.                                                  |
 | `GET`    | `/api/v1/projects/:projectId`                  | Yes           | Gets a project by ID.                                                                                       |
 | `PUT`    | `/api/v1/projects/:projectId`                  | Yes           | Updates a project by ID. Intended for admin users.                                                          |
-| `DELETE` | `/api/v1/projects/:projectId`                  | Yes           | Deletes a project by ID. Intended for admin users.                                                          |
+| `DELETE` | `/api/v1/projects/:projectId`                  | Yes           | Deletes a project and cascades to its members, tasks, subtasks, notes, and attachments. Admin only.         |
 | `GET`    | `/api/v1/projects/:projectId/members`          | Yes           | Lists members for a project.                                                                                |
 | `POST`   | `/api/v1/projects/:projectId/members`          | Yes           | Adds or updates a project member by email and role. Intended for admin users.                               |
 | `PUT`    | `/api/v1/projects/:projectId/members/:userId`  | Yes           | Updates a project member role. Admin only.                                                                  |
@@ -221,11 +223,13 @@ This is a backend API project, so no application UI screenshots are available in
 
 ## Testing / Verification
 
-`scripts/verify.mjs` is an end-to-end smoke test (Node's built-in `node:test` + `fetch`, no extra dependencies) that runs against a live `npm run dev` server and the real MongoDB database configured in `.env`. It registers two users, exercises project/task/subtask/note CRUD and RBAC (including cross-project access and the member-vs-admin subtask permission split), and cleans up everything it creates.
+`scripts/verify.mjs` is an end-to-end smoke test (Node's built-in `node:test` + `fetch`, no extra dependencies) that runs against a live `npm run dev` server and the real MongoDB database configured in `.env`. It registers two users, exercises project/task/subtask/note CRUD and RBAC (including cross-project access and the member-vs-admin subtask permission split), asserts that deleting a project leaves no orphaned rows behind, and cleans up everything it creates.
+
+It also runs on every push and pull request via `.github/workflows/ci.yml`, against a real MongoDB service container on `ubuntu-latest`. That workflow additionally imports the whole module graph on a case-sensitive filesystem, which catches import-path casing mistakes that a Windows or macOS machine cannot detect locally.
 
 ```bash
-npm run dev                                       # in one terminal
-RATE_LIMIT_ENABLED=false node scripts/verify.mjs  # in another, once the server is up
+npm run dev                  # in one terminal
+RATE_LIMIT_ENABLED=false npm run verify   # in another, once the server is up
 ```
 
 Disabling the rate limiter matters: the script makes several auth calls per run and would
@@ -242,6 +246,11 @@ otherwise exhaust the auth budget after a few consecutive runs.
   tricks like `a.txt.html`. SVG is deliberately excluded because it can carry inline `<script>`.
   Stored filenames are random UUIDs, and everything under `public/` is served with
   `Content-Disposition: attachment` and `X-Content-Type-Options: nosniff`.
+- **Storage driver.** Multer buffers uploads in memory and `src/utils/storage.js` decides where the
+  bytes land: Cloudinary when its three credentials are present, `public/images` otherwise. The
+  filter above runs before either driver, so a rejected file is never written anywhere. Each stored
+  attachment records the `provider` and `key` needed to delete it again — without those, removing a
+  task or project would leave its blobs orphaned in a paid account indefinitely.
 - **Account enumeration.** Login answers `401 Invalid credentials` for both an unknown address and
   a wrong password, and forgot-password always returns the same 200. Note one residual gap: a
   request for a nonexistent user skips bcrypt and so returns measurably faster. Closing that timing
@@ -256,9 +265,9 @@ otherwise exhaust the auth budget after a few consecutive runs.
 
 ## Future Improvements
 
-- Add a committed `.env.example`.
 - Expand automated coverage beyond the single smoke-test script (e.g. per-endpoint validation edge cases, token expiry/refresh behavior).
 - Add linting in addition to the existing Prettier configuration.
+- Support removing an individual attachment from a task; today they can only be appended, or removed wholesale with the task.
 
 ## Learning Outcomes
 

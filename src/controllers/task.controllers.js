@@ -7,6 +7,7 @@ import { ApiError } from "../utils/api-error.js";
 import { asyncHandler } from "../utils/async-handler.js";
 import mongoose from "mongoose";
 import { AvailableUserRole, UserRolesEnum } from "../utils/constants.js";
+import { saveAttachment, deleteAttachments } from "../utils/storage.js";
 
 // A Subtask references only its parent Task, never a project, so authorization
 // has to resolve through that parent. Both failure modes throw an identical 404
@@ -51,13 +52,12 @@ const createTask = asyncHandler(async (req, res) => {
     }
     const files = req.files || [];
 
-    const attachments = files.map((file) => {
-        return {
-            url: `${process.env.SERVER_URL}/images/${file.filename}`,
-            mimetype: file.mimetype,
-            size: file.size,
-        };
-    });
+    // Uploaded in parallel; storage.js decides Cloudinary vs. local disk and
+    // returns the subdocument to persist, including the key needed to delete
+    // the blob again later.
+    const attachments = await Promise.all(
+        files.map((file) => saveAttachment(file)),
+    );
 
     const task = await Task.create({
         title,
@@ -159,11 +159,9 @@ const updateTask = asyncHandler(async (req, res) => {
     const { title, description, assignedTo, status } = req.body;
 
     const files = req.files || [];
-    const newAttachments = files.map((file) => ({
-        url: `${process.env.SERVER_URL}/images/${file.filename}`,
-        mimetype: file.mimetype,
-        size: file.size,
-    }));
+    const newAttachments = await Promise.all(
+        files.map((file) => saveAttachment(file)),
+    );
 
     const updateOps = {
         $set: {
@@ -205,6 +203,11 @@ const deleteTask = asyncHandler(async (req, res) => {
     }
 
     await Subtask.deleteMany({ task: taskId });
+
+    // Best effort, and deliberately after the row is gone: a blob we fail to
+    // remove is wasted storage, but a blob store outage should not stop the
+    // caller from deleting their own task.
+    await deleteAttachments(task.attachments);
 
     return res
         .status(200)

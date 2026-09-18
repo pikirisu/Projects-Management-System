@@ -595,6 +595,94 @@ test("V1 backend smoke test", async (t) => {
             });
             assert.equal(d.status, 200, JSON.stringify(d.json));
         });
+
+        await t.test(
+            "deleting a project cascades to its members, tasks, subtasks and notes",
+            async () => {
+                // A throwaway project so the assertions below can be exact
+                // counts rather than deltas against the shared fixtures.
+                const p = await api("/projects", {
+                    method: "POST",
+                    token: adminToken,
+                    body: {
+                        name: `Verify Cascade ${STAMP}`,
+                        description: "cascade delete",
+                    },
+                });
+                assert.equal(p.status, 201, JSON.stringify(p.json));
+                const cascadeId = p.json.data._id;
+                createdProjectIds.push(cascadeId);
+
+                await api(`/projects/${cascadeId}/members`, {
+                    method: "POST",
+                    token: adminToken,
+                    body: {
+                        email: `verify-member-${STAMP}@test.local`,
+                        role: "member",
+                    },
+                });
+
+                const ct = await api(`/tasks/${cascadeId}`, {
+                    method: "POST",
+                    token: adminToken,
+                    body: { title: "cascade task" },
+                });
+                assert.equal(ct.status, 201, JSON.stringify(ct.json));
+                const cascadeTaskId = ct.json.data._id;
+                createdTaskIds.push(cascadeTaskId);
+
+                await api(`/tasks/${cascadeId}/t/${cascadeTaskId}/subtasks`, {
+                    method: "POST",
+                    token: adminToken,
+                    body: { title: "cascade subtask" },
+                });
+                await api(`/notes/${cascadeId}`, {
+                    method: "POST",
+                    token: adminToken,
+                    body: { content: "cascade note" },
+                });
+
+                const del = await api(`/projects/${cascadeId}`, {
+                    method: "DELETE",
+                    token: adminToken,
+                });
+                assert.equal(del.status, 200, JSON.stringify(del.json));
+
+                // MongoDB has no foreign keys, so nothing cascades unless the
+                // controller does it. Assert against the collections directly:
+                // the API would report these as absent either way, since every
+                // read is scoped to a project that no longer exists.
+                const db = mongoose.connection.db;
+                const projectOid = new mongoose.Types.ObjectId(cascadeId);
+                const taskOid = new mongoose.Types.ObjectId(cascadeTaskId);
+
+                const leftovers = {
+                    projectmembers: await db
+                        .collection("projectmembers")
+                        .countDocuments({ project: projectOid }),
+                    tasks: await db
+                        .collection("tasks")
+                        .countDocuments({ project: projectOid }),
+                    subtasks: await db
+                        .collection("subtasks")
+                        .countDocuments({ task: taskOid }),
+                    projectnotes: await db
+                        .collection("projectnotes")
+                        .countDocuments({ project: projectOid }),
+                };
+
+                assert.deepEqual(
+                    leftovers,
+                    {
+                        projectmembers: 0,
+                        tasks: 0,
+                        subtasks: 0,
+                        projectnotes: 0,
+                    },
+                    `orphaned rows after project delete: ${JSON.stringify(leftovers)}`,
+                );
+            },
+        );
     } finally {
         const db = mongoose.connection.db;
         const projectObjIds = createdProjectIds.map(
