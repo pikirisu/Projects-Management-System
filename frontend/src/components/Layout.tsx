@@ -3,6 +3,7 @@ import { Link, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../context/auth";
 import { pingApi } from "../lib/api";
 import { Button } from "./ui";
+import { VerifyEmailBanner } from "./VerifyEmailBanner";
 
 /*
  * A free-tier host suspends the service after a stretch of inactivity, and the
@@ -96,6 +97,7 @@ export function Layout() {
     return (
         <div className="flex min-h-full flex-col bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
             <ApiStatusBanner state={wakeState} />
+            <VerifyEmailBanner />
 
             <header className="border-b border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
                 <div className="mx-auto flex h-14 max-w-5xl items-center justify-between gap-4 px-4 sm:px-6">

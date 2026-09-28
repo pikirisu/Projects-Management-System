@@ -2,6 +2,7 @@ import { User } from "../models/user.models.js";
 import { ApiResponse } from "../utils/api-response.js";
 import { ApiError } from "../utils/api-error.js";
 import { asyncHandler } from "../utils/async-handler.js";
+import { buildVerificationLink } from "../utils/verification-link.js";
 import {
     emailVerificationMailgenContent,
     forgotPasswordMailgenContent,
@@ -67,7 +68,11 @@ const registerUser = asyncHandler(async (req, res) => {
         subject: "Please verify your email",
         mailgenContent: emailVerificationMailgenContent(
             user.username,
-            `${req.protocol}://${req.get("host")}/api/v1/auth/verify-email/${unHashedToken}`,
+            buildVerificationLink({
+                clientUrl: process.env.EMAIL_VERIFICATION_REDIRECT_URL,
+                apiOrigin: `${req.protocol}://${req.get("host")}`,
+                token: unHashedToken,
+            }),
         ),
     });
 
@@ -227,7 +232,11 @@ const resendEmailVerification = asyncHandler(async (req, res) => {
         subject: "Please verify your email",
         mailgenContent: emailVerificationMailgenContent(
             user.username,
-            `${req.protocol}://${req.get("host")}/api/v1/auth/verify-email/${unHashedToken}`,
+            buildVerificationLink({
+                clientUrl: process.env.EMAIL_VERIFICATION_REDIRECT_URL,
+                apiOrigin: `${req.protocol}://${req.get("host")}`,
+                token: unHashedToken,
+            }),
         ),
     });
 

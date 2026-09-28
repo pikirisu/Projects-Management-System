@@ -638,6 +638,67 @@ test("V1 backend smoke test", async (t) => {
         });
 
         await t.test(
+            "email verification flips the flag and cannot be replayed",
+            async () => {
+                // Same trick as the reset test: only the hash is stored, so the
+                // emailed token cannot be read back. Plant a known pair and let
+                // the controller hash what arrives and compare.
+                const rawToken = `verify-email-${STAMP}`;
+                const hashed = crypto
+                    .createHash("sha256")
+                    .update(rawToken)
+                    .digest("hex");
+
+                await mongoose.connection.db.collection("users").updateOne(
+                    { _id: new mongoose.Types.ObjectId(outsiderId) },
+                    {
+                        $set: {
+                            emailVerificationToken: hashed,
+                            emailVerificationExpiry: new Date(
+                                Date.now() + 10 * 60 * 1000,
+                            ),
+                            isEmailVerified: false,
+                        },
+                    },
+                );
+
+                const bad = await api("/auth/verify-email/not-the-token");
+                assert.equal(bad.status, 400, JSON.stringify(bad.json));
+
+                const verified = await api(`/auth/verify-email/${rawToken}`);
+                assert.equal(
+                    verified.status,
+                    200,
+                    JSON.stringify(verified.json),
+                );
+                assert.equal(verified.json.data.isEmailVerified, true);
+
+                const stored = await mongoose.connection.db
+                    .collection("users")
+                    .findOne({ _id: new mongoose.Types.ObjectId(outsiderId) });
+                assert.equal(stored.isEmailVerified, true);
+
+                // Single use: a successful verification clears the token.
+                const replay = await api(`/auth/verify-email/${rawToken}`);
+                assert.equal(replay.status, 400, JSON.stringify(replay.json));
+
+                // And the client needs this flag to decide whether to nag.
+                const login = await api("/auth/login", {
+                    method: "POST",
+                    body: {
+                        email: `verify-outsider-${STAMP}@test.local`,
+                        password: "Passw0rd!",
+                    },
+                });
+                assert.equal(login.status, 200, JSON.stringify(login.json));
+                const me = await api("/auth/current-user", {
+                    token: login.json.data.accessToken,
+                });
+                assert.equal(me.json.data.isEmailVerified, true);
+            },
+        );
+
+        await t.test(
             "forgot-password and reset-password complete a full cycle",
             async () => {
                 // The request is accepted whether or not the address exists;

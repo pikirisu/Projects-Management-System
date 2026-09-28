@@ -33,6 +33,7 @@ jobs:
       REFRESH_TOKEN_SECRET: ci-only-refresh-secret-not-used-anywhere-real
       REFRESH_TOKEN_EXPIRY: 10d
       FORGOT_PASSWORD_REDIRECT_URL: http://localhost:5173/reset-password
+      EMAIL_VERIFICATION_REDIRECT_URL: http://localhost:5173/verify-email
       # verify.mjs makes several auth calls per run and would otherwise exhaust
       # the auth budget mid-suite.
       RATE_LIMIT_ENABLED: false
@@ -59,6 +60,9 @@ jobs:
       # runner is what makes that class of bug impossible to merge.
       - name: Boot check (case-sensitive module graph)
         run: npm run boot-check
+
+      - name: Unit tests (no server, no database)
+        run: npm run test:unit
 
       - name: Start server
         run: npm start &

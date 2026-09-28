@@ -8,6 +8,7 @@ import { Projects } from "./routes/Projects";
 import { ProjectDetail } from "./routes/ProjectDetail";
 import { ForgotPassword } from "./routes/ForgotPassword";
 import { ResetPassword } from "./routes/ResetPassword";
+import { VerifyEmail } from "./routes/VerifyEmail";
 import { Spinner } from "./components/ui";
 
 function FullPageSpinner() {
@@ -79,6 +80,13 @@ export function App() {
              * here, not the session.
              */}
             <Route path="/reset-password/:token" element={<ResetPassword />} />
+
+            {/*
+             * Also public and also unguarded, for the same reason: the link
+             * arrives by email and has to work whatever this browser's session
+             * happens to be. EMAIL_VERIFICATION_REDIRECT_URL points here.
+             */}
+            <Route path="/verify-email/:token" element={<VerifyEmail />} />
 
             <Route
                 element={
