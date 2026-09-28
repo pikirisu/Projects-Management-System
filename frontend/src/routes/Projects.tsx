@@ -1,6 +1,8 @@
 import { useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "../lib/api";
+import { formatDate } from "../lib/display";
 import { ROLE_LABELS, type Project, type ProjectListEntry } from "../lib/types";
 import {
     Alert,
@@ -11,18 +13,6 @@ import {
     Field,
     Spinner,
 } from "../components/ui";
-
-const dateFormatter = new Intl.DateTimeFormat(undefined, {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-});
-
-function formatDate(value?: string) {
-    if (!value) return null;
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? null : dateFormatter.format(parsed);
-}
 
 function NewProjectForm({ onDone }: { onDone: () => void }) {
     const queryClient = useQueryClient();
@@ -104,32 +94,37 @@ function ProjectRow({ entry }: { entry: ProjectListEntry }) {
     const created = formatDate(entry.project.createdAt);
 
     return (
-        <Card className="flex items-start justify-between gap-4 p-4">
-            <div className="min-w-0">
-                <p className="truncate text-sm font-medium">
-                    {entry.project.name}
-                </p>
-                <p className="mt-0.5 line-clamp-2 text-sm text-neutral-500 dark:text-neutral-400">
-                    {entry.project.description || "No description"}
-                </p>
-                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-neutral-500 dark:text-neutral-400">
-                    <span>
-                        {entry.project.members ?? 0}{" "}
-                        {entry.project.members === 1 ? "member" : "members"}
-                    </span>
-                    {created && <span>Created {created}</span>}
+        <Card className="transition-colors hover:ring-neutral-300 dark:hover:ring-neutral-700">
+            <Link
+                to={`/projects/${entry.project._id}`}
+                className="flex items-start justify-between gap-4 rounded-lg p-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
+            >
+                <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">
+                        {entry.project.name}
+                    </p>
+                    <p className="mt-0.5 line-clamp-2 text-sm text-neutral-500 dark:text-neutral-400">
+                        {entry.project.description || "No description"}
+                    </p>
+                    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-neutral-500 dark:text-neutral-400">
+                        <span>
+                            {entry.project.members ?? 0}{" "}
+                            {entry.project.members === 1 ? "member" : "members"}
+                        </span>
+                        {created && <span>Created {created}</span>}
+                    </div>
                 </div>
-            </div>
 
-            {/*
-             * The role here is the caller's own role on this project, returned
-             * by the getProjects aggregation. In the next pass it also decides
-             * which actions the UI offers -- the server stays the enforcement
-             * point, the UI just stops offering what it would refuse.
-             */}
-            <Badge tone={entry.role === "member" ? "neutral" : "accent"}>
-                {ROLE_LABELS[entry.role]}
-            </Badge>
+                {/*
+                 * The caller's own role on this project, from the getProjects
+                 * aggregation. The detail page re-derives it from the member
+                 * list rather than trusting this copy, which goes stale as soon
+                 * as an admin changes it.
+                 */}
+                <Badge tone={entry.role === "member" ? "neutral" : "accent"}>
+                    {ROLE_LABELS[entry.role]}
+                </Badge>
+            </Link>
         </Card>
     );
 }

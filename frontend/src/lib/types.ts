@@ -58,3 +58,80 @@ export interface AuthPayload {
     accessToken: string;
     refreshToken: string;
 }
+
+/** Mirrors TaskStatusEnum in src/utils/constants.js. */
+export type TaskStatus = "todo" | "in_progress" | "done";
+
+export const TASK_STATUSES: TaskStatus[] = ["todo", "in_progress", "done"];
+
+export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
+    todo: "To do",
+    in_progress: "In progress",
+    done: "Done",
+};
+
+export interface Attachment {
+    _id?: string;
+    url: string;
+    mimetype?: string;
+    size?: number;
+    provider?: string;
+    key?: string;
+    resourceType?: string;
+}
+
+/**
+ * `assignedTo` is populated on reads (GET /tasks/:projectId and the
+ * getTaskById aggregation) but comes back as a bare id from create/update,
+ * which return the raw document. `asUser` in ./display.ts narrows the two.
+ */
+export type UserRef = User | string | null | undefined;
+
+export interface Task {
+    _id: string;
+    title: string;
+    description?: string;
+    project: string;
+    assignedTo?: UserRef;
+    assignedBy?: UserRef;
+    status: TaskStatus;
+    attachments?: Attachment[];
+    createdAt?: string;
+    updatedAt?: string;
+}
+
+export interface Subtask {
+    _id: string;
+    title: string;
+    task: string;
+    isCompleted: boolean;
+    createdBy?: UserRef;
+    createdAt?: string;
+}
+
+/** GET /tasks/:projectId/t/:taskId joins the subtasks in. */
+export interface TaskDetail extends Task {
+    subtasks: Subtask[];
+}
+
+export interface Note {
+    _id: string;
+    project: string;
+    content: string;
+    createdBy?: UserRef;
+    createdAt?: string;
+    updatedAt?: string;
+}
+
+/**
+ * GET /projects/:projectId/members. The aggregation projects `_id: 0`, so the
+ * membership row has no id of its own -- `user._id` is the key, and it is also
+ * what the update/delete routes take as their :userId segment.
+ */
+export interface ProjectMemberEntry {
+    project: string;
+    user: User;
+    role: Role;
+    createdAt?: string;
+    updatedAt?: string;
+}

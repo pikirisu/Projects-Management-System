@@ -13,7 +13,9 @@
     "scripts": {
         "dev": "nodemon src/index.js",
         "start": "node src/index.js",
+        "test": "node scripts/verify.mjs",
         "verify": "node scripts/verify.mjs",
+        "seed": "node scripts/seed-demo.mjs",
         "format": "prettier --write .",
         "format:check": "prettier --check .",
         "boot-check": "node --input-type=module -e \"import('./src/app.js').then(() => console.log('boot ok'))\""

@@ -5,6 +5,7 @@ import { Layout } from "./components/Layout";
 import { Login } from "./routes/Login";
 import { Register } from "./routes/Register";
 import { Projects } from "./routes/Projects";
+import { ProjectDetail } from "./routes/ProjectDetail";
 import { Spinner } from "./components/ui";
 
 function FullPageSpinner() {
@@ -62,6 +63,10 @@ export function App() {
                 }
             >
                 <Route path="/projects" element={<Projects />} />
+                <Route
+                    path="/projects/:projectId"
+                    element={<ProjectDetail />}
+                />
             </Route>
 
             <Route path="*" element={<Navigate to="/projects" replace />} />

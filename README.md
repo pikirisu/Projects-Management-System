@@ -2,6 +2,8 @@
 
 Backend One is a Node.js and Express REST API for project-management workflows. It exposes authentication, health check, project, project-member, task, subtask, and project-note routes backed by MongoDB through Mongoose, with role-based access control enforced per project (`admin`, `project_admin`, `member`).
 
+A React single-page client lives in `frontend/` and consumes that API: sign-in, a project list, and a per-project workspace with a task board, subtasks, attachments, notes, and member management. The client mirrors the server's role rules so it never offers an action the API would reject.
+
 ## Features
 
 - Express server with JSON, URL-encoded, cookie, CORS, and static-file middleware.
@@ -24,6 +26,17 @@ Backend One is a Node.js and Express REST API for project-management workflows. 
 - Security headers via `helmet`, and per-IP rate limiting with a stricter budget on authentication endpoints.
 - Hardened auth cookies (`httpOnly`, `SameSite`, and a `maxAge` matching the token's own expiry).
 - Centralized JSON error handling for `ApiError`, Multer upload errors, Mongo duplicate keys, Mongoose validation/cast errors, and malformed ObjectIds.
+
+### Web client (`frontend/`)
+
+- Bearer-token session with a single-flight refresh, so several queries failing at once cannot spend the same rotating refresh token twice.
+- Project list linking into a per-project workspace with Tasks, Notes, Members, and (for admins) Settings tabs.
+- Task board grouped by status, with optimistic status changes that roll back to the previous board when the server refuses the move.
+- Task slide-over: description, assignee, attachments with sizes, and subtasks that any member may tick off.
+- Task create and edit send JSON when no files are selected and multipart when they are, so an empty assignee is omitted rather than failing the `isMongoId` validator.
+- Member management with add-by-email and role changes; your own row is deliberately not editable, so the last admin cannot lock themselves out.
+- Role-aware UI throughout: a plain member sees no task controls, and notes stay read-only for anyone who is not a project `admin`.
+- Two-step inline confirmation for destructive actions instead of `window.confirm`, which some embedded browsers suppress outright.
 
 ## Tech Stack
 
@@ -56,6 +69,17 @@ Backend One is a Node.js and Express REST API for project-management workflows. 
 |   |-- routes/                  # Express route definitions
 |   |-- utils/                   # API response/error helpers, constants, email utilities
 |   `-- validators/              # express-validator request validators
+|-- frontend/                    # React + Vite single-page client
+|   |-- src/
+|   |   |-- components/          # UI kit and per-project panels
+|   |   |-- context/             # Auth provider and session restore
+|   |   |-- lib/                 # API client, shared types, display helpers
+|   |   |-- routes/              # Login, Register, Projects, ProjectDetail
+|   |   `-- test/                # Vitest setup and render helpers
+|   `-- vitest.config.ts         # jsdom test config, separate from vite.config.ts
+|-- scripts/
+|   |-- verify.mjs               # End-to-end backend smoke test
+|   `-- seed-demo.mjs            # Populates a running server with demo data
 |-- test/                        # Ignored reference copy and PRD, not active test specs
 |-- package.json                 # Scripts and dependency metadata
 |-- package-lock.json            # Locked npm dependency tree
@@ -161,6 +185,31 @@ By default, the server listens on:
 http://localhost:3000
 ```
 
+### Web client
+
+```bash
+cd frontend
+npm install
+npm run dev          # http://localhost:5173
+```
+
+The client reads its API base URL from `VITE_API_URL` (see `frontend/.env.example`); it
+defaults to `http://localhost:8000/api/v1`. Set `CORS_ORIGIN=http://localhost:5173` in the
+server's `.env` so the browser will send credentialed requests.
+
+### Demo data
+
+With the server running, `scripts/seed-demo.mjs` creates two accounts, a project with members
+in two roles, four tasks spread across every status with subtasks, and a note — enough to see
+every screen populated:
+
+```bash
+npm run seed           # add the demo workspace if it is not already there
+npm run seed -- --reset   # rebuild it from scratch
+```
+
+It prints the credentials to sign in with when it finishes.
+
 ## API Endpoints
 
 The current Express app mounts routes under `/api/v1` for health checks, authentication, and projects.
@@ -235,6 +284,27 @@ RATE_LIMIT_ENABLED=false npm run verify   # in another, once the server is up
 Disabling the rate limiter matters: the script makes several auth calls per run and would
 otherwise exhaust the auth budget after a few consecutive runs.
 
+### Frontend tests
+
+The client has its own Vitest suite (jsdom + Testing Library). It needs no database and no
+running API: the request layer is stubbed, so the tests assert on component behaviour rather
+than on the network.
+
+```bash
+cd frontend
+npm test          # single run
+npm run test:watch
+```
+
+Coverage is aimed at the things a typecheck cannot catch — that tasks land in the right status
+column, that a plain member is offered no task controls and no Settings tab, that an admin
+cannot edit their own membership row, that an optimistic status change rolls back when the
+server refuses it, and that a task with no attachments is sent as JSON rather than multipart.
+
+`vitest.config.ts` is deliberately separate from `vite.config.ts`: Vitest bundles its own copy
+of Vite, and a single config importing both `vitest/config` and the Vite 8 plugins types the
+plugin array against the wrong copy and fails `tsc --noEmit`.
+
 ## Security Notes
 
 - **Project-scoped resource access.** Every task, subtask, and note lookup is constrained to the
@@ -265,9 +335,11 @@ otherwise exhaust the auth budget after a few consecutive runs.
 
 ## Future Improvements
 
-- Expand automated coverage beyond the single smoke-test script (e.g. per-endpoint validation edge cases, token expiry/refresh behavior).
 - Add linting in addition to the existing Prettier configuration.
 - Support removing an individual attachment from a task; today they can only be appended, or removed wholesale with the task.
+- Expand backend coverage beyond the smoke-test script, particularly per-endpoint validation edge cases and token expiry/refresh behaviour.
+- Drag-and-drop on the task board. The status dropdown on each card is keyboard-accessible and works everywhere, so dragging would be an addition to it rather than a replacement.
+- A real reset-password screen in the client; the API supports the flow but the UI has no route for it yet.
 
 ## Learning Outcomes
 

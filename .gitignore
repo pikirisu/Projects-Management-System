@@ -6,9 +6,11 @@ node_modules
 .env.local
 .env.*.local
 
-# local scratch: reference copy and PRD, not active test specs
-test
-test.md
+# local scratch: reference copy and PRD, not active test specs.
+# Leading slashes anchor these to the repo root -- a bare `test` matches at every
+# depth and would silently swallow frontend/src/test/, whose helpers CI needs.
+/test/
+/test.md
 
 # personal files that must never reach a public repo
 *.pdf
