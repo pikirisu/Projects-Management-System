@@ -340,9 +340,16 @@ npm run test:watch
 ```
 
 Coverage is aimed at the things a typecheck cannot catch — that tasks land in the right status
-column, that a plain member is offered no task controls and no Settings tab, that an admin
-cannot edit their own membership row, that an optimistic status change rolls back when the
-server refuses it, and that a task with no attachments is sent as JSON rather than multipart.
+column, that a plain member is offered no task controls and no Settings tab, that an
+optimistic status change rolls back when the server refuses it, that a task with no
+attachments is sent as JSON rather than multipart, and that the reset-password route stays
+reachable for a browser that still holds a session.
+
+`src/lib/api.test.ts` covers the client's own auth machinery against a stubbed `fetch`: the 401
+retry, the single-flight refresh, and that a failed refresh clears the session. That module is
+mocked wholesale by every other test file, so nothing else exercises it — and it holds the
+subtlest logic in the client. The single-flight assertion was confirmed to fail when the
+memoisation is removed, since a test that cannot fail proves nothing.
 
 `vitest.config.ts` is deliberately separate from `vite.config.ts`: Vitest bundles its own copy
 of Vite, and a single config importing both `vitest/config` and the Vite 8 plugins types the
