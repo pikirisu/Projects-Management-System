@@ -162,7 +162,7 @@ const addMembersToProject = asyncHandler(async (req, res) => {
     const user = await User.findOne({ email });
 
     if (!user) {
-        throw new ApiError(404, "User does not exists");
+        throw new ApiError(404, "No account exists with that email address");
     }
 
     await ProjectMember.findOneAndUpdate(

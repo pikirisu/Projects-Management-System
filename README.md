@@ -38,6 +38,7 @@ A React single-page client lives in `frontend/` and consumes that API: sign-in, 
 - Account screen showing the signed-in profile and verification state, with a change-password form that explains up front that every session ends — including the current one — and signs the user out afterwards.
 - Project list linking into a per-project workspace with Tasks, Notes, Members, and (for admins) Settings tabs.
 - Task board grouped by status, with optimistic status changes that roll back to the previous board when the server refuses the move.
+- Board search and assignee filter, including "assigned to me" and "unassigned", applied in the browser because `GET /tasks/:projectId` returns the whole project in one response and takes no query parameters.
 - Task slide-over: description, assignee, attachments with sizes, and subtasks that any member may tick off.
 - Task create and edit send JSON when no files are selected and multipart when they are, so an empty assignee is omitted rather than failing the `isMongoId` validator.
 - Member management with add-by-email and role changes; your own row is deliberately not editable, so the last admin cannot lock themselves out.

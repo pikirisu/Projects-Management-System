@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "../../lib/api";
-import { asUser, displayName, initials } from "../../lib/display";
+import { asUser, displayName, initials, refId } from "../../lib/display";
 import {
     TASK_STATUSES,
     TASK_STATUS_LABELS,
@@ -9,6 +9,7 @@ import {
     type Task,
     type TaskStatus,
 } from "../../lib/types";
+import { useAuth } from "../../context/auth";
 import type { Permissions } from "../../routes/ProjectDetail";
 import {
     Alert,
@@ -298,6 +299,30 @@ function TaskCard({
     );
 }
 
+/** "me" is resolved against the signed-in user, not stored as their id. */
+type AssigneeFilter = "all" | "me" | "unassigned" | string;
+
+function matchesAssignee(
+    task: Task,
+    filter: AssigneeFilter,
+    myId: string | undefined,
+) {
+    if (filter === "all") return true;
+    const assigned = refId(task.assignedTo);
+    if (filter === "unassigned") return !assigned;
+    if (filter === "me") return Boolean(myId) && assigned === myId;
+    return assigned === filter;
+}
+
+function matchesQuery(task: Task, query: string) {
+    if (!query) return true;
+    const needle = query.toLowerCase();
+    return (
+        task.title.toLowerCase().includes(needle) ||
+        (task.description ?? "").toLowerCase().includes(needle)
+    );
+}
+
 export function TasksPanel({
     projectId,
     can,
@@ -313,8 +338,11 @@ export function TasksPanel({
     isPending: boolean;
     error: unknown;
 }) {
+    const { user } = useAuth();
     const [creating, setCreating] = useState(false);
     const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+    const [query, setQuery] = useState("");
+    const [assignee, setAssignee] = useState<AssigneeFilter>("all");
 
     if (isPending) {
         return (
@@ -336,16 +364,80 @@ export function TasksPanel({
     }
 
     const all = tasks ?? [];
+    const filtering = query.trim().length > 0 || assignee !== "all";
+    const visible = all.filter(
+        (task) =>
+            matchesAssignee(task, assignee, user?._id) &&
+            matchesQuery(task, query.trim()),
+    );
 
     return (
         <div className="space-y-4">
-            {can.manageTasks && !creating && (
-                <div className="flex justify-end">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+                {/*
+                 * Filtered in the browser rather than through the API: GET
+                 * /tasks/:projectId returns the whole project's tasks in one
+                 * response and takes no query parameters, so a round trip per
+                 * keystroke would fetch exactly the same rows back.
+                 */}
+                {all.length > 0 && (
+                    <div className="flex flex-wrap items-end gap-2">
+                        <div className="w-48">
+                            <input
+                                type="search"
+                                value={query}
+                                onChange={(event) =>
+                                    setQuery(event.target.value)
+                                }
+                                placeholder="Search tasks"
+                                aria-label="Search tasks"
+                                className="block w-full rounded-md bg-white px-3 py-1.5 text-sm text-neutral-900 ring-1 ring-neutral-300 ring-inset placeholder:text-neutral-400 focus:ring-2 focus:ring-indigo-600 focus:outline-none dark:bg-neutral-900 dark:text-neutral-100 dark:ring-neutral-700"
+                            />
+                        </div>
+                        <div className="w-44">
+                            <Select
+                                aria-label="Filter by assignee"
+                                value={assignee}
+                                onChange={(event) =>
+                                    setAssignee(event.target.value)
+                                }
+                                className="!py-1.5"
+                                options={[
+                                    { value: "all", label: "Everyone" },
+                                    { value: "me", label: "Assigned to me" },
+                                    {
+                                        value: "unassigned",
+                                        label: "Unassigned",
+                                    },
+                                    ...members
+                                        .filter(
+                                            (entry) =>
+                                                entry.user._id !== user?._id,
+                                        )
+                                        .map((entry) => ({
+                                            value: entry.user._id,
+                                            label: displayName(entry.user),
+                                        })),
+                                ]}
+                            />
+                        </div>
+                        {filtering && (
+                            <p
+                                role="status"
+                                className="pb-1.5 text-xs text-neutral-500 dark:text-neutral-400"
+                            >
+                                {visible.length} of {all.length}
+                            </p>
+                        )}
+                    </div>
+                )}
+
+                {can.manageTasks && !creating && (
                     <Button size="sm" onClick={() => setCreating(true)}>
                         New task
                     </Button>
-                </div>
-            )}
+                )}
+            </div>
 
             {creating && (
                 <NewTaskForm
@@ -371,10 +463,27 @@ export function TasksPanel({
                         ) : undefined
                     }
                 />
+            ) : filtering && visible.length === 0 ? (
+                <EmptyState
+                    title="No tasks match"
+                    description="Nothing in this project matches the current search and assignee filter."
+                    action={
+                        <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => {
+                                setQuery("");
+                                setAssignee("all");
+                            }}
+                        >
+                            Clear filters
+                        </Button>
+                    }
+                />
             ) : (
                 <div className="grid gap-4 md:grid-cols-3">
                     {TASK_STATUSES.map((status) => {
-                        const column = all.filter(
+                        const column = visible.filter(
                             (task) => task.status === status,
                         );
                         return (

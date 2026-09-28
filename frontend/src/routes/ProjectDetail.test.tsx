@@ -284,6 +284,77 @@ describe("ProjectDetail", () => {
         ).not.toBeInTheDocument();
     });
 
+    it("narrows the board by search text", async () => {
+        stubQueries("admin");
+        const user = userEvent.setup();
+        renderPage();
+
+        await screen.findByText("Migrate the blog");
+        await user.type(screen.getByLabelText("Search tasks"), "pricing");
+
+        await waitFor(() =>
+            expect(
+                screen.queryByText("Migrate the blog"),
+            ).not.toBeInTheDocument(),
+        );
+        expect(screen.getByText("Rebuild pricing")).toBeInTheDocument();
+        expect(screen.getByRole("status")).toHaveTextContent("1 of 3");
+    });
+
+    it("narrows the board to the signed-in user's own tasks", async () => {
+        stubQueries("admin");
+        const user = userEvent.setup();
+        renderPage();
+
+        await screen.findByText("Migrate the blog");
+        await user.selectOptions(
+            screen.getByLabelText("Filter by assignee"),
+            "me",
+        );
+
+        // Only "Rebuild pricing" has an assignee, and it is the colleague --
+        // so "assigned to me" is empty rather than showing everything.
+        expect(await screen.findByText("No tasks match")).toBeInTheDocument();
+
+        await user.selectOptions(
+            screen.getByLabelText("Filter by assignee"),
+            "them-1",
+        );
+        expect(await screen.findByText("Rebuild pricing")).toBeInTheDocument();
+        expect(screen.queryByText("Migrate the blog")).not.toBeInTheDocument();
+    });
+
+    it("offers a way back from a filter that matches nothing", async () => {
+        stubQueries("admin");
+        const user = userEvent.setup();
+        renderPage();
+
+        await screen.findByText("Migrate the blog");
+        await user.type(screen.getByLabelText("Search tasks"), "zzzz");
+
+        expect(await screen.findByText("No tasks match")).toBeInTheDocument();
+        await user.click(screen.getByRole("button", { name: "Clear filters" }));
+
+        expect(await screen.findByText("Migrate the blog")).toBeInTheDocument();
+        expect(screen.getByText("Rebuild pricing")).toBeInTheDocument();
+    });
+
+    it("finds unassigned work, which is what goes unnoticed", async () => {
+        stubQueries("admin");
+        const user = userEvent.setup();
+        renderPage();
+
+        await screen.findByText("Migrate the blog");
+        await user.selectOptions(
+            screen.getByLabelText("Filter by assignee"),
+            "unassigned",
+        );
+
+        expect(await screen.findByText("Migrate the blog")).toBeInTheDocument();
+        expect(screen.getByText("Audit performance")).toBeInTheDocument();
+        expect(screen.queryByText("Rebuild pricing")).not.toBeInTheDocument();
+    });
+
     it("creates a task as JSON when no files are attached", async () => {
         stubQueries("admin");
         post.mockResolvedValue(makeTask({ title: "New thing" }));
