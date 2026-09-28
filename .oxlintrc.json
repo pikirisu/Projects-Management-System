@@ -1,0 +1,18 @@
+{
+    "$schema": "./node_modules/oxlint/configuration_schema.json",
+    "plugins": ["unicorn", "oxc", "promise", "node", "import"],
+    "categories": {
+        "correctness": "error"
+    },
+    "env": {
+        "node": true,
+        "es2023": true
+    },
+    "rules": {
+        "no-unused-vars": [
+            "error",
+            { "argsIgnorePattern": "^(_|next$|req$|res$)" }
+        ]
+    },
+    "ignorePatterns": ["node_modules", "public", "frontend", "test"]
+}

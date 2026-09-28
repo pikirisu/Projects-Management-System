@@ -37,10 +37,13 @@ async function api(pathname, { method = "GET", token, body, form } = {}) {
         headers["Content-Type"] = "application/json";
         payload = JSON.stringify(body);
     }
+    const requestBody = form ?? payload;
     const res = await fetch(`${BASE}${pathname}`, {
         method,
         headers,
-        body: form ?? payload,
+        // Omitted rather than set to undefined: fetch rejects a GET that
+        // carries a body at all, and these helpers default to GET.
+        ...(requestBody === undefined ? {} : { body: requestBody }),
     });
     const json = await res.json().catch(() => null);
     return { status: res.status, json };

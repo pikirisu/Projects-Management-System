@@ -39,6 +39,10 @@ const generateAccessAndRefreshTokens = async (userId) => {
         await user.save({ validateBeforeSave: false });
         return { accessToken, refreshToken };
     } catch (error) {
+        // Reaching here means signing failed or the database refused the
+        // write. The caller gets a generic 500, but an operator needs the
+        // actual cause -- without this the log said nothing at all.
+        console.error("[auth] could not issue tokens:", error);
         throw new ApiError(
             500,
             "Something went wrong while generating access token",
@@ -298,7 +302,9 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
                     "Access token refreshed",
                 ),
             );
-    } catch (error) {
+    } catch {
+        // Same reasoning as verifyJWT: a caller learns that the token was
+        // rejected, never which check rejected it.
         throw new ApiError(401, "Invalid refresh token");
     }
 });

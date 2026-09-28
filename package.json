@@ -17,6 +17,7 @@
         "test:unit": "node --test src/utils/verification-link.test.js src/utils/storage.test.js",
         "verify": "node scripts/verify.mjs",
         "seed": "node scripts/seed-demo.mjs",
+        "lint": "oxlint --deny-warnings src scripts",
         "format": "prettier --write .",
         "format:check": "prettier --check .",
         "boot-check": "node --input-type=module -e \"import('./src/app.js').then(() => console.log('boot ok'))\""
@@ -28,6 +29,7 @@
     "author": "Akshat Chaurasia",
     "license": "ISC",
     "devDependencies": {
+        "oxlint": "^1.86.0",
         "prettier": "3.8.4"
     },
     "dependencies": {

@@ -52,6 +52,9 @@ jobs:
       - name: Check formatting
         run: npm run format:check
 
+      - name: Lint
+        run: npm run lint
+
       # The load-bearing step. This repo is developed on Windows, whose
       # filesystem is case-insensitive: an import of "../utils/api-error.js"
       # resolves happily against a file committed as "Api-Error.js". On Linux it
@@ -104,6 +107,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Lint
+        run: npm run lint
 
       - name: Typecheck
         run: npm run typecheck

@@ -294,6 +294,25 @@ RATE_LIMIT_ENABLED=false npm run verify   # in another, once the server is up
 Disabling the rate limiter matters: the script makes several auth calls per run and would
 otherwise exhaust the auth budget after a few consecutive runs.
 
+### Linting
+
+Both projects lint with [oxlint](https://oxc.rs/docs/guide/usage/linter.html):
+
+```bash
+npm run lint            # src/ and scripts/
+cd frontend && npm run lint
+```
+
+oxlint rather than ESLint for one concrete reason: this project is on TypeScript
+7, and typescript-eslint refuses to load against it outright — not a peer
+warning but a thrown error, tracked in typescript-eslint#10940. Without its
+parser, ESLint cannot read a `.tsx` file at all, which rules out
+`react-hooks/rules-of-hooks` and `exhaustive-deps` — the rules actually worth
+having here. oxlint parses TypeScript itself and implements both.
+
+The trade-off is that oxlint has no type-aware rules. `tsc --noEmit` covers that
+ground and runs in the same CI job.
+
 ### Backend unit tests
 
 The pieces that need neither a server nor a database run on their own:
@@ -384,7 +403,6 @@ plugin array against the wrong copy and fails `tsc --noEmit`.
 
 ## Future Improvements
 
-- Add linting in addition to the existing Prettier configuration.
 - Support removing an individual attachment from a task; today they can only be appended, or removed wholesale with the task.
 - Expand backend coverage beyond the smoke-test script, particularly per-endpoint validation edge cases and token expiry/refresh behaviour.
 - Drag-and-drop on the task board. The status dropdown on each card is keyboard-accessible and works everywhere, so dragging would be an addition to it rather than a replacement.

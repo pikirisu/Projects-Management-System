@@ -48,7 +48,8 @@ async function api(pathname, { method = "GET", token, body } = {}) {
     const response = await fetch(`${BASE}${pathname}`, {
         method,
         headers,
-        body: body ? JSON.stringify(body) : undefined,
+        // See the note in scripts/verify.mjs: a GET must not carry a body key.
+        ...(body ? { body: JSON.stringify(body) } : {}),
     });
 
     const envelope = await response.json().catch(() => null);

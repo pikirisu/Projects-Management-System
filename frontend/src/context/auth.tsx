@@ -29,7 +29,15 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
     const [user, setUser] = useState<User | null>(null);
-    const [status, setStatus] = useState<AuthContextValue["status"]>("loading");
+    /*
+     * Lazy initialiser, not a plain "loading". With no refresh token there is
+     * nothing to restore and the answer is already known, so starting at
+     * "loading" and correcting it in the effect below would render the guards'
+     * full-page spinner for one frame on every visit by a signed-out user.
+     */
+    const [status, setStatus] = useState<AuthContextValue["status"]>(() =>
+        getRefreshToken() ? "loading" : "anonymous",
+    );
     const queryClient = useQueryClient();
 
     /*
@@ -42,10 +50,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     useEffect(() => {
         let cancelled = false;
 
-        if (!getRefreshToken()) {
-            setStatus("anonymous");
-            return;
-        }
+        // Already resolved to "anonymous" above; nothing to restore.
+        if (!getRefreshToken()) return;
 
         api.get<User>("/auth/current-user")
             .then((restored) => {

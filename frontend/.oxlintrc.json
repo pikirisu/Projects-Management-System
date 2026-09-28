@@ -1,0 +1,17 @@
+{
+    "$schema": "./node_modules/oxlint/configuration_schema.json",
+    "plugins": ["react", "typescript", "unicorn", "oxc", "vitest", "promise"],
+    "categories": {
+        "correctness": "error"
+    },
+    "rules": {
+        "react-hooks/rules-of-hooks": "error",
+        "react-hooks/exhaustive-deps": "error",
+        "no-unused-vars": [
+            "error",
+            { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }
+        ],
+        "vitest/require-mock-type-parameters": "off"
+    },
+    "ignorePatterns": ["dist", "node_modules"]
+}

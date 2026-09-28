@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "../../lib/api";
 import {
@@ -436,11 +436,10 @@ export function TaskDetail({
     onClose: () => void;
 }) {
     const queryClient = useQueryClient();
+    // Reset between tasks comes from the `key` this is mounted with, not from
+    // an effect: React discards the whole subtree when the key changes, so
+    // `editing` cannot survive into a different task.
     const [editing, setEditing] = useState(false);
-
-    // A different task in the same open panel must not inherit the previous
-    // one's edit mode.
-    useEffect(() => setEditing(false), [taskId]);
 
     const {
         data: task,

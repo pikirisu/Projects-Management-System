@@ -524,6 +524,7 @@ export function TasksPanel({
 
             {openTaskId && (
                 <TaskDetail
+                    key={openTaskId}
                     projectId={projectId}
                     taskId={openTaskId}
                     can={can}

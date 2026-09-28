@@ -25,7 +25,10 @@ export const verifyJWT = asyncHandler(async (req, res, next) => {
         }
         req.user = user;
         next();
-    } catch (error) {
+    } catch {
+        // The reason is deliberately dropped: "expired" and "signature
+        // mismatch" are useful to an attacker and to nobody else. The catch
+        // binding is omitted so that intent is not mistaken for an oversight.
         throw new ApiError(401, "Invalid access token");
     }
 });
