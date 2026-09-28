@@ -27,6 +27,7 @@ A React single-page client lives in `frontend/` and consumes that API: sign-in, 
 - Cascading project deletes: removing a project also removes its members, tasks, subtasks, notes, and stored attachment blobs.
 - Security headers via `helmet`, and per-IP rate limiting with a stricter budget on authentication endpoints.
 - Hardened auth cookies (`httpOnly`, `SameSite`, and a `maxAge` matching the token's own expiry).
+- Changing a password ends every session: both the reset and the signed-in change clear the stored refresh token, so credentials issued before the change stop working.
 - Centralized JSON error handling for `ApiError`, Multer upload errors, Mongo duplicate keys, Mongoose validation/cast errors, and malformed ObjectIds.
 
 ### Web client (`frontend/`)
@@ -331,6 +332,13 @@ plugin array against the wrong copy and fails `tsc --noEmit`.
   `:projectId` in the URL, not just the child's own id. A mismatch returns **404 rather than 403**,
   so the response cannot be used to probe whether a resource exists in another project.
   `scripts/verify.mjs` covers this directly.
+- **A password change ends every session.** `resetForgotPassword` and
+  `changeCurrentPassword` both clear the stored refresh token. A reset is what someone does when
+  they believe their account is compromised, so it has to actually evict whoever else is holding
+  it — without this, a refresh token minted before the reset kept renewing itself for its full
+  lifetime. Access tokens are stateless JWTs and cannot be revoked individually, so one already
+  issued stays valid until it expires; clearing the refresh token caps that residual window at a
+  single `ACCESS_TOKEN_EXPIRY`. `scripts/verify.mjs` asserts both paths.
 - **Every project keeps an admin.** `updateMemberRole` and `deleteMember` refuse a change that
   would leave a project with no `admin`. This is a liveness property rather than a
   confidentiality one, and it is unrecoverable if violated: renaming, deleting, adding a member,

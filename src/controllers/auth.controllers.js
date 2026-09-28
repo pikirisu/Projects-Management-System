@@ -16,6 +16,19 @@ import {
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
 
+/*
+ * Changing a password ends every other session.
+ *
+ * A reset is what someone does when they believe their account is compromised,
+ * so it has to actually evict whoever else is holding it. Only one refresh
+ * token is stored per user, and refreshAccessToken compares against it, so
+ * clearing it makes every previously issued refresh token stop working.
+ *
+ * Access tokens are stateless JWTs and cannot be revoked one by one, so an
+ * already-issued one stays valid until it expires. Clearing the refresh token
+ * caps that residual window at a single ACCESS_TOKEN_EXPIRY instead of leaving
+ * the attacker a session that renews itself for the life of the refresh token.
+ */
 const generateAccessAndRefreshTokens = async (userId) => {
     try {
         const user = await User.findById(userId);
@@ -349,10 +362,15 @@ const resetForgotPassword = asyncHandler(async (req, res) => {
     user.forgotPasswordToken = undefined;
 
     user.password = newPassword;
+    // See the note above generateAccessAndRefreshTokens: the reset is the point
+    // at which any session opened with the old password has to stop working.
+    user.refreshToken = undefined;
     await user.save({ validateBeforeSave: false });
 
     return res
         .status(200)
+        .clearCookie("accessToken", getCookieOptions())
+        .clearCookie("refreshToken", getCookieOptions())
         .json(new ApiResponse(200, {}, "Password reset successfully"));
 });
 
@@ -368,10 +386,16 @@ const changeCurrentPassword = asyncHandler(async (req, res) => {
     }
 
     user.password = newPassword;
+    // Same reasoning as resetForgotPassword: other sessions must not survive.
+    // The caller has to sign in again too, which is the honest tradeoff -- the
+    // API cannot tell this request's own refresh token apart from any other.
+    user.refreshToken = undefined;
     await user.save({ validateBeforeSave: false });
 
     return res
         .status(200)
+        .clearCookie("accessToken", getCookieOptions())
+        .clearCookie("refreshToken", getCookieOptions())
         .json(new ApiResponse(200, {}, "Password changed successfully"));
 });
 

@@ -55,6 +55,7 @@ test("V1 backend smoke test", async (t) => {
 
     try {
         let adminToken, memberToken, adminId, memberId;
+        let memberRefreshToken;
         // A registered account that is never added to any project here, so its
         // id is well-formed but not a member of anything.
         let outsiderId;
@@ -103,6 +104,7 @@ test("V1 backend smoke test", async (t) => {
             });
             assert.equal(lb.status, 200, JSON.stringify(lb.json));
             memberToken = lb.json.data.accessToken;
+            memberRefreshToken = lb.json.data.refreshToken;
             memberId = lb.json.data.user._id;
 
             const c = await api("/auth/register", {
@@ -756,11 +758,28 @@ test("V1 backend smoke test", async (t) => {
                     JSON.stringify(wrongToken.json),
                 );
 
+                // Captured before the reset: this is the session that a
+                // reset is supposed to evict.
+                const staleRefresh = memberRefreshToken;
+
                 const reset = await api(`/auth/reset-password/${rawToken}`, {
                     method: "POST",
                     body: { newPassword: "N3wPassw0rd!" },
                 });
                 assert.equal(reset.status, 200, JSON.stringify(reset.json));
+
+                // A reset is what someone does when they think their account
+                // is compromised, so a refresh token minted before it must
+                // stop working -- otherwise the other party keeps the account.
+                const staleReplay = await api("/auth/refresh-token", {
+                    method: "POST",
+                    body: { refreshToken: staleRefresh },
+                });
+                assert.equal(
+                    staleReplay.status,
+                    401,
+                    `refresh token issued before the reset still works: ${JSON.stringify(staleReplay.json)}`,
+                );
 
                 // The new password works and the old one no longer does.
                 const withNew = await api("/auth/login", {
@@ -773,6 +792,7 @@ test("V1 backend smoke test", async (t) => {
                 assert.equal(withNew.status, 200, JSON.stringify(withNew.json));
                 memberToken = withNew.json.data.accessToken;
 
+                // ...and the password it replaced does not.
                 const withOld = await api("/auth/login", {
                     method: "POST",
                     body: {
@@ -781,6 +801,42 @@ test("V1 backend smoke test", async (t) => {
                     },
                 });
                 assert.equal(withOld.status, 401, JSON.stringify(withOld.json));
+
+                // change-password carries the same obligation, and revokes the
+                // caller's own session too: the API cannot tell this request's
+                // refresh token apart from anybody else's.
+                const beforeChange = withNew.json.data.refreshToken;
+                const changed = await api("/auth/change-password", {
+                    method: "POST",
+                    token: memberToken,
+                    body: {
+                        oldPassword: "N3wPassw0rd!",
+                        newPassword: "Passw0rd!",
+                    },
+                });
+                assert.equal(changed.status, 200, JSON.stringify(changed.json));
+
+                const afterChange = await api("/auth/refresh-token", {
+                    method: "POST",
+                    body: { refreshToken: beforeChange },
+                });
+                assert.equal(
+                    afterChange.status,
+                    401,
+                    `refresh token issued before the change still works: ${JSON.stringify(afterChange.json)}`,
+                );
+
+                // Back on the original password, with a fresh session for the
+                // subtests that follow.
+                const relogin = await api("/auth/login", {
+                    method: "POST",
+                    body: {
+                        email: `verify-member-${STAMP}@test.local`,
+                        password: "Passw0rd!",
+                    },
+                });
+                assert.equal(relogin.status, 200, JSON.stringify(relogin.json));
+                memberToken = relogin.json.data.accessToken;
 
                 // Single use: the token is cleared by a successful reset.
                 const replay = await api(`/auth/reset-password/${rawToken}`, {
