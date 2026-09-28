@@ -67,14 +67,17 @@ function UserMenu() {
 
     return (
         <div className="flex items-center gap-3">
-            <div className="hidden text-right sm:block">
-                <p className="text-xs font-medium text-neutral-900 dark:text-neutral-100">
+            <Link
+                to="/account"
+                className="hidden rounded px-1 text-right focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 sm:block"
+            >
+                <p className="text-xs font-medium text-neutral-900 hover:text-indigo-600 dark:text-neutral-100 dark:hover:text-indigo-400">
                     {user.fullName || user.username}
                 </p>
                 <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
                     {user.email}
                 </p>
-            </div>
+            </Link>
             <Button
                 variant="secondary"
                 size="sm"

@@ -5,6 +5,7 @@ import { Layout } from "./components/Layout";
 import { Login } from "./routes/Login";
 import { Register } from "./routes/Register";
 import { Projects } from "./routes/Projects";
+import { Account } from "./routes/Account";
 import { ProjectDetail } from "./routes/ProjectDetail";
 import { ForgotPassword } from "./routes/ForgotPassword";
 import { ResetPassword } from "./routes/ResetPassword";
@@ -100,6 +101,7 @@ export function App() {
                     path="/projects/:projectId"
                     element={<ProjectDetail />}
                 />
+                <Route path="/account" element={<Account />} />
             </Route>
 
             <Route path="*" element={<Navigate to="/projects" replace />} />

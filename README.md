@@ -35,6 +35,7 @@ A React single-page client lives in `frontend/` and consumes that API: sign-in, 
 - Bearer-token session with a single-flight refresh, so several queries failing at once cannot spend the same rotating refresh token twice.
 - Forgot-password and reset-password screens. `FORGOT_PASSWORD_REDIRECT_URL` points the emailed link at `/reset-password/<token>` in the client, so that route has to exist for the flow the API implements to be reachable at all.
 - Email-verification screen, plus an in-app banner that offers an unverified account a fresh link while it still has a session to request one with.
+- Account screen showing the signed-in profile and verification state, with a change-password form that explains up front that every session ends — including the current one — and signs the user out afterwards.
 - Project list linking into a per-project workspace with Tasks, Notes, Members, and (for admins) Settings tabs.
 - Task board grouped by status, with optimistic status changes that roll back to the previous board when the server refuses the move.
 - Task slide-over: description, assignee, attachments with sizes, and subtasks that any member may tick off.
@@ -379,8 +380,8 @@ plugin array against the wrong copy and fails `tsc --noEmit`.
 - Support removing an individual attachment from a task; today they can only be appended, or removed wholesale with the task.
 - Expand backend coverage beyond the smoke-test script, particularly per-endpoint validation edge cases and token expiry/refresh behaviour.
 - Drag-and-drop on the task board. The status dropdown on each card is keyboard-accessible and works everywhere, so dragging would be an addition to it rather than a replacement.
-- An account screen for changing your password while signed in; the endpoint exists and has no UI.
 - Removing a single attachment from a task, rather than only appending or deleting the task wholesale.
+- Editing a profile (full name, avatar upload); the user model carries both fields and no endpoint updates them.
 
 ## Learning Outcomes
 
