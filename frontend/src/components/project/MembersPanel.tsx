@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "../../lib/api";
 import { displayName, formatDate, initials } from "../../lib/display";
@@ -125,6 +126,7 @@ function MemberRow({
     isSelf: boolean;
 }) {
     const queryClient = useQueryClient();
+    const navigate = useNavigate();
     const membersKey = ["project", projectId, "members"];
 
     function refresh() {
@@ -143,7 +145,12 @@ function MemberRow({
     const remove = useMutation({
         mutationFn: () =>
             api.delete(`/projects/${projectId}/members/${entry.user._id}`),
-        onSuccess: refresh,
+        onSuccess: () => {
+            refresh();
+            // Leaving a project revokes your own access to it, so staying on
+            // the page would just render a wall of permission errors.
+            if (isSelf) void navigate("/projects", { replace: true });
+        },
     });
 
     const joined = formatDate(entry.createdAt);
@@ -176,12 +183,13 @@ function MemberRow({
 
                 <div className="flex items-center gap-2">
                     {/*
-                     * Editing your own row is deliberately blocked: the API
-                     * happily lets the last admin demote or remove themselves,
-                     * which would leave the project with no one able to
-                     * administer it and no way back in.
+                     * Admins may step down or leave, including from their own
+                     * row. What stops a project from ending up unmanageable is
+                     * the server: updateMemberRole and deleteMember both refuse
+                     * with a 409 when the change would remove its last admin,
+                     * which surfaces in the alert below.
                      */}
-                    {can.manageProject && !isSelf ? (
+                    {can.manageProject ? (
                         <>
                             <Select
                                 aria-label={`Role for ${displayName(entry.user)}`}
@@ -198,8 +206,9 @@ function MemberRow({
                             <ConfirmButton
                                 loading={remove.isPending}
                                 onConfirm={() => remove.mutate()}
+                                confirmLabel={isSelf ? "Leave" : "Remove"}
                             >
-                                Remove
+                                {isSelf ? "Leave project" : "Remove"}
                             </ConfirmButton>
                         </>
                     ) : (

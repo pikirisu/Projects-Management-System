@@ -21,6 +21,8 @@ A React single-page client lives in `frontend/` and consumes that API: sign-in, 
 - Project notes CRUD, restricted to admin for create/update/delete; all project roles can read.
 - Mongoose schemas for users, projects, project members, tasks, subtasks, and project notes.
 - Project-scoped resource authorization: task, subtask, and note lookups are constrained to the project in the URL, not just the child's own id.
+- Task assignees are checked against project membership, so a task cannot be assigned to someone who has no way to open the project it lives in.
+- Every project keeps at least one admin: demoting or removing the last one is refused with a 409, because no other role can rename, delete, or re-staff a project.
 - Upload allowlist (MIME plus extension must agree), randomised stored filenames, and uploads served as non-executable attachments.
 - Cascading project deletes: removing a project also removes its members, tasks, subtasks, notes, and stored attachment blobs.
 - Security headers via `helmet`, and per-IP rate limiting with a stricter budget on authentication endpoints.
@@ -311,6 +313,18 @@ plugin array against the wrong copy and fails `tsc --noEmit`.
   `:projectId` in the URL, not just the child's own id. A mismatch returns **404 rather than 403**,
   so the response cannot be used to probe whether a resource exists in another project.
   `scripts/verify.mjs` covers this directly.
+- **Every project keeps an admin.** `updateMemberRole` and `deleteMember` refuse a change that
+  would leave a project with no `admin`. This is a liveness property rather than a
+  confidentiality one, and it is unrecoverable if violated: renaming, deleting, adding a member,
+  and changing a role are all gated on `admin`, so an admin-less project cannot be repaired
+  through the API at all. Because the count and the write are separate round trips, each path
+  re-counts afterwards and undoes its own change if a concurrent demotion crossed the line --
+  a transaction would be tidier but needs a replica set, and CI runs a standalone `mongod`.
+- **Assignees must be members.** `express-validator` can only see the request body, so it can
+  check that `assignedTo` is a well-formed ObjectId and nothing more. `createTask` and
+  `updateTask` additionally resolve it against `ProjectMember`, before any attachment is
+  written -- a rejection after the upload would orphan the blobs with no row left to delete
+  them by.
 - **Upload allowlist.** `src/middlewares/multer.middleware.js` accepts a file only when its MIME
   type is known _and_ its extension belongs to that type, which also rejects double-extension
   tricks like `a.txt.html`. SVG is deliberately excluded because it can carry inline `<script>`.

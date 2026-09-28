@@ -247,6 +247,23 @@ const getProjectMembers = asyncHandler(async (req, res) => {
         .json(new ApiResponse(200, projectMembers, "Project members fetched"));
 });
 
+/*
+ * A project with no admin is unrecoverable. Renaming it, deleting it, adding a
+ * member and changing a role are all gated on the admin role, so once the last
+ * admin is gone nobody left can repair it -- the rows simply sit in the
+ * database, still paying for their attachment blobs. Both the demote path and
+ * the remove path have to hold this line, and an admin acting on someone else
+ * is as capable of crossing it as one acting on themselves.
+ */
+const countAdmins = (projectId) =>
+    ProjectMember.countDocuments({
+        project: new mongoose.Types.ObjectId(projectId),
+        role: UserRolesEnum.ADMIN,
+    });
+
+const LAST_ADMIN_MESSAGE =
+    "A project must keep at least one admin. Promote another member first.";
+
 const updateMemberRole = asyncHandler(async (req, res) => {
     const { projectId, userId } = req.params;
     const { newRole } = req.body;
@@ -264,6 +281,14 @@ const updateMemberRole = asyncHandler(async (req, res) => {
         throw new ApiError(400, "Project member not found");
     }
 
+    const demotingAnAdmin =
+        projectMember.role === UserRolesEnum.ADMIN &&
+        newRole !== UserRolesEnum.ADMIN;
+
+    if (demotingAnAdmin && (await countAdmins(projectId)) <= 1) {
+        throw new ApiError(409, LAST_ADMIN_MESSAGE);
+    }
+
     projectMember = await ProjectMember.findByIdAndUpdate(
         projectMember._id,
         {
@@ -274,6 +299,21 @@ const updateMemberRole = asyncHandler(async (req, res) => {
 
     if (!projectMember) {
         throw new ApiError(400, "Project member not found");
+    }
+
+    /*
+     * The count above and the write below are two round trips, so two admins
+     * demoting each other at the same moment can both pass the check. Re-count
+     * afterwards and undo if the invariant actually broke: in that race both
+     * writers restore their own row and both report a conflict, which leaves
+     * the project exactly as it started. A transaction would be tidier, but it
+     * would require a replica set, and CI runs a standalone mongod.
+     */
+    if (demotingAnAdmin && (await countAdmins(projectId)) === 0) {
+        await ProjectMember.findByIdAndUpdate(projectMember._id, {
+            role: UserRolesEnum.ADMIN,
+        });
+        throw new ApiError(409, LAST_ADMIN_MESSAGE);
     }
 
     return res
@@ -299,10 +339,27 @@ const deleteMember = asyncHandler(async (req, res) => {
         throw new ApiError(400, "Project member not found");
     }
 
+    const removingAnAdmin = projectMember.role === UserRolesEnum.ADMIN;
+
+    if (removingAnAdmin && (await countAdmins(projectId)) <= 1) {
+        throw new ApiError(409, LAST_ADMIN_MESSAGE);
+    }
+
     projectMember = await ProjectMember.findByIdAndDelete(projectMember._id);
 
     if (!projectMember) {
         throw new ApiError(400, "Project member not found");
+    }
+
+    // Same race as updateMemberRole, same compensating write: put the
+    // membership back rather than leave the project with nobody in charge.
+    if (removingAnAdmin && (await countAdmins(projectId)) === 0) {
+        await ProjectMember.create({
+            user: projectMember.user,
+            project: projectMember.project,
+            role: projectMember.role,
+        });
+        throw new ApiError(409, LAST_ADMIN_MESSAGE);
     }
 
     return res

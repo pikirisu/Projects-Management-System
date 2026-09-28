@@ -243,20 +243,60 @@ describe("ProjectDetail", () => {
         expect(body).not.toHaveProperty("assignedTo");
     });
 
-    it("lets an admin manage other members but not their own row", async () => {
+    it("lets an admin manage every member, including themselves", async () => {
         stubQueries("admin");
         const user = userEvent.setup();
         renderPage();
 
         await user.click(await screen.findByRole("tab", { name: /Members/ }));
 
+        // The last-admin rule is the server's to enforce (it answers 409), so
+        // the UI does not pre-emptively lock an admin out of their own row.
         expect(
             await screen.findByLabelText("Role for Sam Teammate"),
         ).toBeInTheDocument();
         expect(
-            screen.queryByLabelText("Role for Dana Owner"),
-        ).not.toBeInTheDocument();
+            screen.getByLabelText("Role for Dana Owner"),
+        ).toBeInTheDocument();
         expect(screen.getByText("you")).toBeInTheDocument();
+        expect(
+            screen.getByRole("button", { name: "Leave project" }),
+        ).toBeInTheDocument();
+    });
+
+    it("shows a member a read-only roster", async () => {
+        stubQueries("member");
+        const user = userEvent.setup();
+        renderPage();
+
+        await user.click(await screen.findByRole("tab", { name: /Members/ }));
+
+        expect(await screen.findByText("Sam Teammate")).toBeInTheDocument();
+        expect(
+            screen.queryByLabelText("Role for Sam Teammate"),
+        ).not.toBeInTheDocument();
+        expect(
+            screen.queryByRole("button", { name: "Add member" }),
+        ).not.toBeInTheDocument();
+    });
+
+    it("surfaces the server's refusal to remove the last admin", async () => {
+        stubQueries("admin");
+        vi.mocked(api.delete).mockRejectedValue(
+            new ApiError(409, "A project must keep at least one admin."),
+        );
+        const user = userEvent.setup();
+        renderPage();
+
+        await user.click(await screen.findByRole("tab", { name: /Members/ }));
+        await user.click(
+            await screen.findByRole("button", { name: "Leave project" }),
+        );
+        await user.click(screen.getByRole("button", { name: "Leave" }));
+
+        expect(await screen.findByRole("alert")).toHaveTextContent(
+            "A project must keep at least one admin.",
+        );
     });
 
     it("keeps notes read-only for a project admin", async () => {

@@ -54,6 +54,9 @@ test("V1 backend smoke test", async (t) => {
 
     try {
         let adminToken, memberToken, adminId, memberId;
+        // A registered account that is never added to any project here, so its
+        // id is well-formed but not a member of anything.
+        let outsiderId;
         let projectId, otherProjectId, taskId, subTaskId, noteId;
 
         await t.test("register + login admin & member", async () => {
@@ -100,6 +103,18 @@ test("V1 backend smoke test", async (t) => {
             assert.equal(lb.status, 200, JSON.stringify(lb.json));
             memberToken = lb.json.data.accessToken;
             memberId = lb.json.data.user._id;
+
+            const c = await api("/auth/register", {
+                method: "POST",
+                body: {
+                    email: `verify-outsider-${STAMP}@test.local`,
+                    username: `voutsider${STAMP}`,
+                    password: "Passw0rd!",
+                },
+            });
+            assert.equal(c.status, 201, JSON.stringify(c.json));
+            outsiderId = c.json.data.user._id;
+            createdUserIds.push(outsiderId);
         });
 
         await t.test("current-user is GET and returns the caller", async () => {
@@ -508,6 +523,118 @@ test("V1 backend smoke test", async (t) => {
                 );
             },
         );
+
+        await t.test(
+            "a task cannot be assigned to someone outside the project",
+            async () => {
+                // `outsiderId` belongs to a registered user who was never added
+                // to this project, so the id is well-formed and the validator
+                // has nothing to object to -- only a membership lookup can
+                // catch it.
+                const created = await api(`/tasks/${projectId}`, {
+                    method: "POST",
+                    token: adminToken,
+                    body: { title: "for a stranger", assignedTo: outsiderId },
+                });
+                assert.equal(created.status, 400, JSON.stringify(created.json));
+
+                const updated = await api(`/tasks/${projectId}/t/${taskId}`, {
+                    method: "PUT",
+                    token: adminToken,
+                    body: { assignedTo: outsiderId },
+                });
+                assert.equal(updated.status, 400, JSON.stringify(updated.json));
+
+                // A real member is still assignable.
+                const ok = await api(`/tasks/${projectId}/t/${taskId}`, {
+                    method: "PUT",
+                    token: adminToken,
+                    body: { assignedTo: memberId },
+                });
+                assert.equal(ok.status, 200, JSON.stringify(ok.json));
+            },
+        );
+
+        await t.test("a project cannot be left without an admin", async () => {
+            // Every management route is gated on the admin role, so a
+            // project whose last admin steps down can never be repaired --
+            // not renamed, not deleted, not given a new admin.
+            const demote = await api(
+                `/projects/${projectId}/members/${adminId}`,
+                {
+                    method: "PUT",
+                    token: adminToken,
+                    body: { newRole: "member" },
+                },
+            );
+            assert.equal(demote.status, 409, JSON.stringify(demote.json));
+
+            const remove = await api(
+                `/projects/${projectId}/members/${adminId}`,
+                { method: "DELETE", token: adminToken },
+            );
+            assert.equal(remove.status, 409, JSON.stringify(remove.json));
+
+            // The admin is still there and still in charge.
+            const stillAdmin = await api(`/projects/${projectId}`, {
+                method: "PUT",
+                token: adminToken,
+                body: { name: `verify-${STAMP} renamed`, description: "x" },
+            });
+            assert.equal(
+                stillAdmin.status,
+                200,
+                JSON.stringify(stillAdmin.json),
+            );
+
+            // With a second admin in place the first one may step down,
+            // and may then be removed outright.
+            const promote = await api(
+                `/projects/${projectId}/members/${memberId}`,
+                {
+                    method: "PUT",
+                    token: adminToken,
+                    body: { newRole: "admin" },
+                },
+            );
+            assert.equal(promote.status, 200, JSON.stringify(promote.json));
+
+            const stepDown = await api(
+                `/projects/${projectId}/members/${adminId}`,
+                {
+                    method: "PUT",
+                    token: adminToken,
+                    body: { newRole: "member" },
+                },
+            );
+            assert.equal(stepDown.status, 200, JSON.stringify(stepDown.json));
+
+            // Restore the original roles: later subtests, and the cleanup
+            // block, both still need this account to be an admin here.
+            const restore = await api(
+                `/projects/${projectId}/members/${adminId}`,
+                {
+                    method: "PUT",
+                    token: memberToken,
+                    body: { newRole: "admin" },
+                },
+            );
+            assert.equal(restore.status, 200, JSON.stringify(restore.json));
+
+            const demoteOther = await api(
+                `/projects/${projectId}/members/${memberId}`,
+                {
+                    method: "PUT",
+                    token: adminToken,
+                    body: { newRole: "member" },
+                },
+            );
+            assert.equal(
+                demoteOther.status,
+                200,
+                JSON.stringify(demoteOther.json),
+            );
+        });
 
         await t.test(
             "IDOR: child resources are scoped to the project in the URL",

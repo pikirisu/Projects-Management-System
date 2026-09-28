@@ -2,6 +2,7 @@ import { User } from "../models/user.models.js";
 import { Project } from "../models/project.models.js";
 import { Task } from "../models/task.models.js";
 import { Subtask } from "../models/subtask.models.js";
+import { ProjectMember } from "../models/projectmember.models.js";
 import { ApiResponse } from "../utils/api-response.js";
 import { ApiError } from "../utils/api-error.js";
 import { asyncHandler } from "../utils/async-handler.js";
@@ -28,6 +29,27 @@ const assertSubtaskInProject = async (subTaskId, projectId) => {
     }
 };
 
+/*
+ * The validator can only see the request body, so all it can check is that
+ * `assignedTo` looks like an ObjectId. Whether that user is on this project is
+ * a fact about another collection -- and assigning work to a non-member gives
+ * them a task they cannot open, because every task route is gated on
+ * membership in the project the task belongs to.
+ */
+const assertAssigneeIsMember = async (assignedTo, projectId) => {
+    const member = await ProjectMember.findOne({
+        project: new mongoose.Types.ObjectId(projectId),
+        user: new mongoose.Types.ObjectId(assignedTo),
+    }).select("_id");
+
+    if (!member) {
+        throw new ApiError(
+            400,
+            "Assigned user is not a member of this project",
+        );
+    }
+};
+
 const getTasks = asyncHandler(async (req, res) => {
     const { projectId } = req.params;
     const project = await Project.findById(projectId);
@@ -50,6 +72,12 @@ const createTask = asyncHandler(async (req, res) => {
     if (!project) {
         throw new ApiError(404, "Project not found");
     }
+    // Before the upload, not after: a rejected task that has already written
+    // its blobs leaves them orphaned in storage with no row to delete them by.
+    if (assignedTo) {
+        await assertAssigneeIsMember(assignedTo, projectId);
+    }
+
     const files = req.files || [];
 
     // Uploaded in parallel; storage.js decides Cloudinary vs. local disk and
@@ -157,6 +185,10 @@ const getTaskById = asyncHandler(async (req, res) => {
 const updateTask = asyncHandler(async (req, res) => {
     const { projectId, taskId } = req.params;
     const { title, description, assignedTo, status } = req.body;
+
+    if (assignedTo !== undefined) {
+        await assertAssigneeIsMember(assignedTo, projectId);
+    }
 
     const files = req.files || [];
     const newAttachments = await Promise.all(
