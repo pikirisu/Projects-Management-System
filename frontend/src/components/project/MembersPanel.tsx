@@ -207,6 +207,11 @@ function MemberRow({
                                 loading={remove.isPending}
                                 onConfirm={() => remove.mutate()}
                                 confirmLabel={isSelf ? "Leave" : "Remove"}
+                                describedAs={
+                                    isSelf
+                                        ? undefined
+                                        : `Remove ${displayName(entry.user)}`
+                                }
                             >
                                 {isSelf ? "Leave project" : "Remove"}
                             </ConfirmButton>

@@ -419,6 +419,13 @@ export function ConfirmButton({
     loading = false,
     children = "Delete",
     confirmLabel = "Confirm",
+    /**
+     * Names the button for assistive tech and for tests. A list of rows each
+     * offering "Remove" gives a screen reader nothing to tell them apart, so
+     * anywhere this button repeats, say what it acts on: "Remove attachment
+     * spec.pdf".
+     */
+    describedAs,
     size = "sm",
     className,
 }: {
@@ -426,6 +433,7 @@ export function ConfirmButton({
     loading?: boolean;
     children?: ReactNode;
     confirmLabel?: string;
+    describedAs?: string;
     size?: "sm" | "md";
     className?: string;
 }) {
@@ -443,6 +451,7 @@ export function ConfirmButton({
             <Button
                 variant="ghost"
                 size={size}
+                aria-label={describedAs}
                 className={cx("text-red-600 dark:text-red-400", className)}
                 onClick={() => setArmed(true)}
             >
@@ -457,6 +466,7 @@ export function ConfirmButton({
                 variant="danger"
                 size={size}
                 loading={loading}
+                aria-label={describedAs && `${confirmLabel}: ${describedAs}`}
                 onClick={() => {
                     setArmed(false);
                     onConfirm();

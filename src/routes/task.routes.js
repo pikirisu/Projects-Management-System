@@ -5,6 +5,7 @@ import {
     getTaskById,
     updateTask,
     deleteTask,
+    deleteTaskAttachment,
     createSubTask,
     updateSubTask,
     deleteSubTask,
@@ -50,6 +51,10 @@ router
         updateTask,
     )
     .delete(validateProjectPermission(PROJECT_MANAGERS), deleteTask);
+
+router
+    .route("/:projectId/t/:taskId/attachments/:attachmentId")
+    .delete(validateProjectPermission(PROJECT_MANAGERS), deleteTaskAttachment);
 
 router
     .route("/:projectId/t/:taskId/subtasks")

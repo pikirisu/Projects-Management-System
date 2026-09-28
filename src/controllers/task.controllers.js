@@ -245,6 +245,49 @@ const deleteTask = asyncHandler(async (req, res) => {
         .status(200)
         .json(new ApiResponse(200, task, "Task deleted successfully"));
 });
+const deleteTaskAttachment = asyncHandler(async (req, res) => {
+    const { projectId, taskId, attachmentId } = req.params;
+
+    /*
+     * The read is only to recover the blob's provider and key, which the
+     * subdocument stops carrying once it is pulled. The removal itself is a
+     * single $pull scoped to both task and project -- splicing the array in
+     * memory and saving the whole document would instead drop any attachment
+     * another request appended in between.
+     */
+    const task = await Task.findOne({ _id: taskId, project: projectId });
+    if (!task) {
+        throw new ApiError(404, "Task not found");
+    }
+
+    const attachment = task.attachments?.id(attachmentId);
+    if (!attachment) {
+        throw new ApiError(404, "Attachment not found");
+    }
+
+    // Snapshot before the pull: the subdocument is detached from the array
+    // afterwards, and deleteAttachments still needs its provider and key.
+    const removed = {
+        provider: attachment.provider,
+        key: attachment.key,
+        resourceType: attachment.resourceType,
+    };
+
+    const updated = await Task.findOneAndUpdate(
+        { _id: taskId, project: projectId },
+        { $pull: { attachments: { _id: attachment._id } } },
+        { new: true },
+    );
+
+    // Best effort and deliberately last, matching deleteTask: the row is the
+    // source of truth, and a blob store outage should not fail the request.
+    await deleteAttachments([removed]);
+
+    return res
+        .status(200)
+        .json(new ApiResponse(200, updated, "Attachment removed successfully"));
+});
+
 const createSubTask = asyncHandler(async (req, res) => {
     const { projectId, taskId } = req.params;
     const { title } = req.body;
@@ -316,6 +359,7 @@ export {
     createTask,
     deleteTask,
     deleteSubTask,
+    deleteTaskAttachment,
     getTaskById,
     getTasks,
     updateSubTask,

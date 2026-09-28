@@ -13,6 +13,7 @@ import {
 import {
     TASK_STATUSES,
     TASK_STATUS_LABELS,
+    type Attachment,
     type ProjectMemberEntry,
     type Subtask,
     type TaskDetail as TaskWithSubtasks,
@@ -98,6 +99,7 @@ function SubtaskRow({
                 <ConfirmButton
                     loading={remove.isPending}
                     onConfirm={() => remove.mutate()}
+                    describedAs={`Remove subtask ${subtask.title}`}
                 >
                     Remove
                 </ConfirmButton>
@@ -164,7 +166,84 @@ function AddSubtaskForm({
     );
 }
 
-function Attachments({ task }: { task: TaskWithSubtasks }) {
+function AttachmentRow({
+    file,
+    projectId,
+    taskId,
+    can,
+}: {
+    file: Attachment;
+    projectId: string;
+    taskId: string;
+    can: Permissions;
+}) {
+    const queryClient = useQueryClient();
+
+    const remove = useMutation({
+        mutationFn: () =>
+            api.delete(
+                `/tasks/${projectId}/t/${taskId}/attachments/${file._id}`,
+            ),
+        onSuccess: () => {
+            void queryClient.invalidateQueries({
+                queryKey: ["project", projectId, "task", taskId],
+            });
+            // The board shows an attachment count per card.
+            void queryClient.invalidateQueries({
+                queryKey: ["project", projectId, "tasks"],
+            });
+        },
+    });
+
+    const size = formatBytes(file.size);
+
+    return (
+        <li className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-neutral-50 dark:hover:bg-neutral-800">
+            <a
+                href={file.url}
+                target="_blank"
+                rel="noreferrer"
+                className="min-w-0 flex-1 truncate text-sm text-indigo-600 dark:text-indigo-400"
+            >
+                {attachmentName(file.url)}
+            </a>
+            {size && (
+                <span className="shrink-0 text-xs text-neutral-400">
+                    {size}
+                </span>
+            )}
+            {/*
+             * Only offered for rows the API can actually address. An
+             * attachment stored before the schema carried subdocument ids has
+             * no _id, and the delete route is keyed on it.
+             */}
+            {can.manageTasks && file._id && (
+                <ConfirmButton
+                    loading={remove.isPending}
+                    onConfirm={() => remove.mutate()}
+                    describedAs={`Remove attachment ${attachmentName(file.url)}`}
+                >
+                    Remove
+                </ConfirmButton>
+            )}
+            {remove.error instanceof ApiError && (
+                <span className="text-xs text-red-600 dark:text-red-400">
+                    {remove.error.message}
+                </span>
+            )}
+        </li>
+    );
+}
+
+function Attachments({
+    task,
+    projectId,
+    can,
+}: {
+    task: TaskWithSubtasks;
+    projectId: string;
+    can: Permissions;
+}) {
     const files = task.attachments ?? [];
     if (files.length === 0) return null;
 
@@ -174,28 +253,15 @@ function Attachments({ task }: { task: TaskWithSubtasks }) {
                 Attachments
             </h3>
             <ul className="mt-2 space-y-1">
-                {files.map((file, index) => {
-                    const size = formatBytes(file.size);
-                    return (
-                        <li key={file._id ?? `${file.url}-${index}`}>
-                            <a
-                                href={file.url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-sm text-indigo-600 hover:bg-neutral-50 dark:text-indigo-400 dark:hover:bg-neutral-800"
-                            >
-                                <span className="truncate">
-                                    {attachmentName(file.url)}
-                                </span>
-                                {size && (
-                                    <span className="shrink-0 text-xs text-neutral-400">
-                                        {size}
-                                    </span>
-                                )}
-                            </a>
-                        </li>
-                    );
-                })}
+                {files.map((file, index) => (
+                    <AttachmentRow
+                        key={file._id ?? `${file.url}-${index}`}
+                        file={file}
+                        projectId={projectId}
+                        taskId={task._id}
+                        can={can}
+                    />
+                ))}
             </ul>
         </section>
     );
@@ -456,7 +522,7 @@ export function TaskDetail({
                         </div>
                     </section>
 
-                    <Attachments task={task} />
+                    <Attachments task={task} projectId={projectId} can={can} />
 
                     <section>
                         <h3 className="flex items-center gap-2 text-xs font-semibold tracking-wide text-neutral-500 uppercase dark:text-neutral-400">

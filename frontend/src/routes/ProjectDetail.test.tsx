@@ -82,6 +82,15 @@ function stubQueries(myRole: Role) {
                     _id: "t-todo",
                     title: "Migrate the blog",
                     description: "412 posts, plus redirects.",
+                    attachments: [
+                        {
+                            _id: "att-1",
+                            url: "/images/spec.pdf",
+                            size: 2048,
+                            provider: "local",
+                            key: "spec.pdf",
+                        },
+                    ],
                     subtasks: [
                         {
                             _id: "s-1",
@@ -223,6 +232,58 @@ describe("ProjectDetail", () => {
         expect(within(panel).getByText("0 of 1 done")).toBeInTheDocument();
     });
 
+    it("lets a manager remove one attachment without the task", async () => {
+        stubQueries("admin");
+        vi.mocked(api.delete).mockResolvedValue({});
+        const user = userEvent.setup();
+        renderPage();
+
+        await user.click(
+            await screen.findByRole("button", { name: "Migrate the blog" }),
+        );
+        const panel = await screen.findByRole("dialog");
+
+        expect(within(panel).getByText("spec.pdf")).toBeInTheDocument();
+        expect(within(panel).getByText("2.0 KB")).toBeInTheDocument();
+
+        // Named rather than just "Remove": the subtask row below offers one
+        // too, and a screen reader would hear two identical buttons.
+        await user.click(
+            within(panel).getByRole("button", {
+                name: "Remove attachment spec.pdf",
+            }),
+        );
+        await user.click(
+            within(panel).getByRole("button", {
+                name: "Confirm: Remove attachment spec.pdf",
+            }),
+        );
+
+        await waitFor(() =>
+            expect(api.delete).toHaveBeenCalledWith(
+                "/tasks/project-1/t/t-todo/attachments/att-1",
+            ),
+        );
+    });
+
+    it("shows a member the attachment but no way to remove it", async () => {
+        stubQueries("member");
+        const user = userEvent.setup();
+        renderPage();
+
+        await user.click(
+            await screen.findByRole("button", { name: "Migrate the blog" }),
+        );
+        const panel = await screen.findByRole("dialog");
+
+        expect(within(panel).getByText("spec.pdf")).toBeInTheDocument();
+        expect(
+            within(panel).queryByRole("button", {
+                name: /^Remove attachment/,
+            }),
+        ).not.toBeInTheDocument();
+    });
+
     it("creates a task as JSON when no files are attached", async () => {
         stubQueries("admin");
         post.mockResolvedValue(makeTask({ title: "New thing" }));
@@ -257,6 +318,10 @@ describe("ProjectDetail", () => {
         ).toBeInTheDocument();
         expect(
             screen.getByLabelText("Role for Dana Owner"),
+        ).toBeInTheDocument();
+        // Distinguishable per member, not a row of identical "Remove"s.
+        expect(
+            screen.getByRole("button", { name: "Remove Sam Teammate" }),
         ).toBeInTheDocument();
         expect(screen.getByText("you")).toBeInTheDocument();
         expect(

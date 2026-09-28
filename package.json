@@ -14,7 +14,7 @@
         "dev": "nodemon src/index.js",
         "start": "node src/index.js",
         "test": "node scripts/verify.mjs",
-        "test:unit": "node --test src/utils/verification-link.test.js",
+        "test:unit": "node --test src/utils/verification-link.test.js src/utils/storage.test.js",
         "verify": "node scripts/verify.mjs",
         "seed": "node scripts/seed-demo.mjs",
         "format": "prettier --write .",

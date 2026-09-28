@@ -74,6 +74,29 @@ const saveLocally = async (file) => {
 };
 
 /**
+ * Resolves a stored key to a path inside LOCAL_DIR, or throws.
+ *
+ * Keys are UUIDs written by saveLocally, so in practice nothing here is
+ * attacker-controlled. The check is for the paths that bypass that: a row
+ * written by an older version, restored from a backup, or edited directly in
+ * the database. A key of "../../src/app.js" would otherwise resolve to a real
+ * file and unlink it, turning a task delete into arbitrary file deletion.
+ */
+export const resolveLocalPath = (key) => {
+    const resolved = path.resolve(LOCAL_DIR, key);
+
+    // path.resolve collapses "..", so comparing afterwards is what catches
+    // traversal; checking the key for ".." beforehand would miss encodings.
+    if (resolved !== path.join(LOCAL_DIR, path.basename(resolved))) {
+        throw new Error(
+            `refusing to delete outside the upload directory: ${key}`,
+        );
+    }
+
+    return resolved;
+};
+
+/**
  * Persists one uploaded file and returns the attachment subdocument to store.
  * `provider` and `key` are what make deletion possible later -- without them a
  * removed task would leave its blobs orphaned in Cloudinary forever.
@@ -116,7 +139,7 @@ export const deleteAttachments = async (attachments = []) => {
                         resource_type: attachment.resourceType || "image",
                     });
                 } else {
-                    await fs.unlink(path.join(LOCAL_DIR, attachment.key));
+                    await fs.unlink(resolveLocalPath(attachment.key));
                 }
             } catch (error) {
                 console.error(

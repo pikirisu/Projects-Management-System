@@ -158,6 +158,7 @@ function NoteCard({
                         <ConfirmButton
                             loading={remove.isPending}
                             onConfirm={() => remove.mutate()}
+                            describedAs={`Delete note: ${note.content.slice(0, 40)}`}
                         />
                     </div>
                 )}

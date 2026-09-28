@@ -16,7 +16,7 @@ A React single-page client lives in `frontend/` and consumes that API: sign-in, 
 - JWT authentication middleware that reads the access token from cookies or the `Authorization` header.
 - Project creation, listing, lookup, update, and deletion route handlers.
 - Project-member add, list, role-update, and removal route handlers, all requiring project membership.
-- Task CRUD, task assignment, status tracking, and multi-file attachment uploads (via Multer, stored in Cloudinary when configured and on local disk otherwise).
+- Task CRUD, task assignment, status tracking, and multi-file attachment uploads (via Multer, stored in Cloudinary when configured and on local disk otherwise), including removing a single attachment without deleting its task.
 - Subtask CRUD, with member access limited to toggling completion (only admin/project_admin can create, delete, or rename subtasks).
 - Project notes CRUD, restricted to admin for create/update/delete; all project roles can read.
 - Mongoose schemas for users, projects, project members, tasks, subtasks, and project notes.
@@ -222,42 +222,43 @@ It prints the credentials to sign in with when it finishes.
 
 The current Express app mounts routes under `/api/v1` for health checks, authentication, and projects.
 
-| Method   | Endpoint                                       | Auth Required | Description                                                                                                 |
-| -------- | ---------------------------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------- |
-| `GET`    | `/`                                            | No            | Returns a welcome message.                                                                                  |
-| `GET`    | `/api/v1/healthcheck`                          | No            | Returns server health status.                                                                               |
-| `POST`   | `/api/v1/auth/register`                        | No            | Registers a user and sends an email verification message.                                                   |
-| `POST`   | `/api/v1/auth/login`                           | No            | Authenticates a user and returns access/refresh tokens.                                                     |
-| `GET`    | `/api/v1/auth/verify-email/:verificationToken` | No            | Verifies a user's email with a temporary token.                                                             |
-| `POST`   | `/api/v1/auth/refresh-token`                   | No            | Refreshes the access token using a refresh token from cookies or the request body.                          |
-| `POST`   | `/api/v1/auth/forgot-password`                 | No            | Sends a password-reset email for a registered account.                                                      |
-| `POST`   | `/api/v1/auth/reset-password/:resetToken`      | No            | Resets a password using a temporary reset token.                                                            |
-| `POST`   | `/api/v1/auth/logout`                          | Yes           | Clears stored refresh token and auth cookies.                                                               |
-| `GET`    | `/api/v1/auth/current-user`                    | Yes           | Returns the authenticated user.                                                                             |
-| `POST`   | `/api/v1/auth/change-password`                 | Yes           | Changes the authenticated user's password.                                                                  |
-| `POST`   | `/api/v1/auth/resend-email-verification`       | Yes           | Sends another email verification message.                                                                   |
-| `GET`    | `/api/v1/projects`                             | Yes           | Lists projects associated with the authenticated user.                                                      |
-| `POST`   | `/api/v1/projects`                             | Yes           | Creates a project and adds the creator as an admin member.                                                  |
-| `GET`    | `/api/v1/projects/:projectId`                  | Yes           | Gets a project by ID.                                                                                       |
-| `PUT`    | `/api/v1/projects/:projectId`                  | Yes           | Updates a project by ID. Intended for admin users.                                                          |
-| `DELETE` | `/api/v1/projects/:projectId`                  | Yes           | Deletes a project and cascades to its members, tasks, subtasks, notes, and attachments. Admin only.         |
-| `GET`    | `/api/v1/projects/:projectId/members`          | Yes           | Lists members for a project.                                                                                |
-| `POST`   | `/api/v1/projects/:projectId/members`          | Yes           | Adds or updates a project member by email and role. Intended for admin users.                               |
-| `PUT`    | `/api/v1/projects/:projectId/members/:userId`  | Yes           | Updates a project member role. Admin only.                                                                  |
-| `DELETE` | `/api/v1/projects/:projectId/members/:userId`  | Yes           | Removes a user from a project. Admin only.                                                                  |
-| `GET`    | `/api/v1/tasks/:projectId`                     | Yes           | Lists tasks in a project. Any project role.                                                                 |
-| `POST`   | `/api/v1/tasks/:projectId`                     | Yes           | Creates a task, optionally with file attachments (multipart `attachments` field). Admin/project_admin only. |
-| `GET`    | `/api/v1/tasks/:projectId/t/:taskId`           | Yes           | Gets a task by ID, with assignee and subtasks populated. Any project role.                                  |
-| `PUT`    | `/api/v1/tasks/:projectId/t/:taskId`           | Yes           | Updates a task; new attachments are appended. Admin/project_admin only.                                     |
-| `DELETE` | `/api/v1/tasks/:projectId/t/:taskId`           | Yes           | Deletes a task and its subtasks. Admin/project_admin only.                                                  |
-| `POST`   | `/api/v1/tasks/:projectId/t/:taskId/subtasks`  | Yes           | Creates a subtask. Admin/project_admin only.                                                                |
-| `PUT`    | `/api/v1/tasks/:projectId/st/:subTaskId`       | Yes           | Updates a subtask. Any project role may toggle `isCompleted`; only admin/project_admin may change `title`.  |
-| `DELETE` | `/api/v1/tasks/:projectId/st/:subTaskId`       | Yes           | Deletes a subtask. Admin/project_admin only.                                                                |
-| `GET`    | `/api/v1/notes/:projectId`                     | Yes           | Lists notes in a project. Any project role.                                                                 |
-| `POST`   | `/api/v1/notes/:projectId`                     | Yes           | Creates a note. Admin only.                                                                                 |
-| `GET`    | `/api/v1/notes/:projectId/n/:noteId`           | Yes           | Gets a note by ID. Any project role.                                                                        |
-| `PUT`    | `/api/v1/notes/:projectId/n/:noteId`           | Yes           | Updates a note. Admin only.                                                                                 |
-| `DELETE` | `/api/v1/notes/:projectId/n/:noteId`           | Yes           | Deletes a note. Admin only.                                                                                 |
+| Method   | Endpoint                                                       | Auth Required | Description                                                                                                 |
+| -------- | -------------------------------------------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------- |
+| `GET`    | `/`                                                            | No            | Returns a welcome message.                                                                                  |
+| `GET`    | `/api/v1/healthcheck`                                          | No            | Returns server health status.                                                                               |
+| `POST`   | `/api/v1/auth/register`                                        | No            | Registers a user and sends an email verification message.                                                   |
+| `POST`   | `/api/v1/auth/login`                                           | No            | Authenticates a user and returns access/refresh tokens.                                                     |
+| `GET`    | `/api/v1/auth/verify-email/:verificationToken`                 | No            | Verifies a user's email with a temporary token.                                                             |
+| `POST`   | `/api/v1/auth/refresh-token`                                   | No            | Refreshes the access token using a refresh token from cookies or the request body.                          |
+| `POST`   | `/api/v1/auth/forgot-password`                                 | No            | Sends a password-reset email for a registered account.                                                      |
+| `POST`   | `/api/v1/auth/reset-password/:resetToken`                      | No            | Resets a password using a temporary reset token.                                                            |
+| `POST`   | `/api/v1/auth/logout`                                          | Yes           | Clears stored refresh token and auth cookies.                                                               |
+| `GET`    | `/api/v1/auth/current-user`                                    | Yes           | Returns the authenticated user.                                                                             |
+| `POST`   | `/api/v1/auth/change-password`                                 | Yes           | Changes the authenticated user's password.                                                                  |
+| `POST`   | `/api/v1/auth/resend-email-verification`                       | Yes           | Sends another email verification message.                                                                   |
+| `GET`    | `/api/v1/projects`                                             | Yes           | Lists projects associated with the authenticated user.                                                      |
+| `POST`   | `/api/v1/projects`                                             | Yes           | Creates a project and adds the creator as an admin member.                                                  |
+| `GET`    | `/api/v1/projects/:projectId`                                  | Yes           | Gets a project by ID.                                                                                       |
+| `PUT`    | `/api/v1/projects/:projectId`                                  | Yes           | Updates a project by ID. Intended for admin users.                                                          |
+| `DELETE` | `/api/v1/projects/:projectId`                                  | Yes           | Deletes a project and cascades to its members, tasks, subtasks, notes, and attachments. Admin only.         |
+| `GET`    | `/api/v1/projects/:projectId/members`                          | Yes           | Lists members for a project.                                                                                |
+| `POST`   | `/api/v1/projects/:projectId/members`                          | Yes           | Adds or updates a project member by email and role. Intended for admin users.                               |
+| `PUT`    | `/api/v1/projects/:projectId/members/:userId`                  | Yes           | Updates a project member role. Admin only.                                                                  |
+| `DELETE` | `/api/v1/projects/:projectId/members/:userId`                  | Yes           | Removes a user from a project. Admin only.                                                                  |
+| `GET`    | `/api/v1/tasks/:projectId`                                     | Yes           | Lists tasks in a project. Any project role.                                                                 |
+| `POST`   | `/api/v1/tasks/:projectId`                                     | Yes           | Creates a task, optionally with file attachments (multipart `attachments` field). Admin/project_admin only. |
+| `GET`    | `/api/v1/tasks/:projectId/t/:taskId`                           | Yes           | Gets a task by ID, with assignee and subtasks populated. Any project role.                                  |
+| `PUT`    | `/api/v1/tasks/:projectId/t/:taskId`                           | Yes           | Updates a task; new attachments are appended. Admin/project_admin only.                                     |
+| `DELETE` | `/api/v1/tasks/:projectId/t/:taskId`                           | Yes           | Deletes a task and its subtasks. Admin/project_admin only.                                                  |
+| `DELETE` | `/api/v1/tasks/:projectId/t/:taskId/attachments/:attachmentId` | Yes           | Removes one attachment from a task and deletes its stored blob. Admin/project_admin only.                   |
+| `POST`   | `/api/v1/tasks/:projectId/t/:taskId/subtasks`                  | Yes           | Creates a subtask. Admin/project_admin only.                                                                |
+| `PUT`    | `/api/v1/tasks/:projectId/st/:subTaskId`                       | Yes           | Updates a subtask. Any project role may toggle `isCompleted`; only admin/project_admin may change `title`.  |
+| `DELETE` | `/api/v1/tasks/:projectId/st/:subTaskId`                       | Yes           | Deletes a subtask. Admin/project_admin only.                                                                |
+| `GET`    | `/api/v1/notes/:projectId`                                     | Yes           | Lists notes in a project. Any project role.                                                                 |
+| `POST`   | `/api/v1/notes/:projectId`                                     | Yes           | Creates a note. Admin only.                                                                                 |
+| `GET`    | `/api/v1/notes/:projectId/n/:noteId`                           | Yes           | Gets a note by ID. Any project role.                                                                        |
+| `PUT`    | `/api/v1/notes/:projectId/n/:noteId`                           | Yes           | Updates a note. Admin only.                                                                                 |
+| `DELETE` | `/api/v1/notes/:projectId/n/:noteId`                           | Yes           | Deletes a note. Admin only.                                                                                 |
 
 ## Architecture Overview
 
@@ -352,6 +353,12 @@ plugin array against the wrong copy and fails `tsc --noEmit`.
   `updateTask` additionally resolve it against `ProjectMember`, before any attachment is
   written -- a rejection after the upload would orphan the blobs with no row left to delete
   them by.
+- **Local deletes cannot escape the upload directory.** Stored keys are UUIDs the server
+  generates, so nothing attacker-controlled normally reaches `fs.unlink`. `resolveLocalPath` in
+  `src/utils/storage.js` checks anyway, because the paths that bypass that are real: a row
+  written by an older version, one restored from a backup, or a database edited by hand. A key
+  of `../../src/app.js` would otherwise resolve to a live file and delete it. Covered by
+  `npm run test:unit`.
 - **Upload allowlist.** `src/middlewares/multer.middleware.js` accepts a file only when its MIME
   type is known _and_ its extension belongs to that type, which also rejects double-extension
   tricks like `a.txt.html`. SVG is deliberately excluded because it can carry inline `<script>`.
@@ -380,7 +387,6 @@ plugin array against the wrong copy and fails `tsc --noEmit`.
 - Support removing an individual attachment from a task; today they can only be appended, or removed wholesale with the task.
 - Expand backend coverage beyond the smoke-test script, particularly per-endpoint validation edge cases and token expiry/refresh behaviour.
 - Drag-and-drop on the task board. The status dropdown on each card is keyboard-accessible and works everywhere, so dragging would be an addition to it rather than a replacement.
-- Removing a single attachment from a task, rather than only appending or deleting the task wholesale.
 - Editing a profile (full name, avatar upload); the user model carries both fields and no endpoint updates them.
 
 ## Learning Outcomes

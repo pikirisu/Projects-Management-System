@@ -926,6 +926,64 @@ test("V1 backend smoke test", async (t) => {
             },
         );
 
+        await t.test(
+            "a single attachment can be removed without the task",
+            async () => {
+                const before = await api(`/tasks/${projectId}/t/${taskId}`, {
+                    token: adminToken,
+                });
+                const attachment = before.json.data.attachments?.[0];
+                assert.ok(
+                    attachment?._id,
+                    `expected the task to carry an attachment: ${JSON.stringify(before.json.data.attachments)}`,
+                );
+
+                // Members may not: this is a task mutation like any other.
+                const asMember = await api(
+                    `/tasks/${projectId}/t/${taskId}/attachments/${attachment._id}`,
+                    { method: "DELETE", token: memberToken },
+                );
+                assert.equal(
+                    asMember.status,
+                    403,
+                    JSON.stringify(asMember.json),
+                );
+
+                const removed = await api(
+                    `/tasks/${projectId}/t/${taskId}/attachments/${attachment._id}`,
+                    { method: "DELETE", token: adminToken },
+                );
+                assert.equal(removed.status, 200, JSON.stringify(removed.json));
+                assert.equal(removed.json.data.attachments.length, 0);
+
+                // The task itself survives; only the attachment is gone.
+                const after = await api(`/tasks/${projectId}/t/${taskId}`, {
+                    token: adminToken,
+                });
+                assert.equal(after.status, 200, JSON.stringify(after.json));
+                assert.equal(after.json.data.attachments.length, 0);
+
+                // Gone means gone: a second delete is a 404, not a 500.
+                const again = await api(
+                    `/tasks/${projectId}/t/${taskId}/attachments/${attachment._id}`,
+                    { method: "DELETE", token: adminToken },
+                );
+                assert.equal(again.status, 404, JSON.stringify(again.json));
+
+                // And it cannot be reached through a project the caller is not
+                // scoped to, the same as every other child resource.
+                const crossProject = await api(
+                    `/tasks/${otherProjectId}/t/${taskId}/attachments/${attachment._id}`,
+                    { method: "DELETE", token: adminToken },
+                );
+                assert.equal(
+                    crossProject.status,
+                    404,
+                    JSON.stringify(crossProject.json),
+                );
+            },
+        );
+
         await t.test("cleanup: delete task", async () => {
             const d = await api(`/tasks/${projectId}/t/${taskId}`, {
                 method: "DELETE",
