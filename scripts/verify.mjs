@@ -11,6 +11,7 @@ import "dotenv/config";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import mongoose from "mongoose";
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -635,6 +636,99 @@ test("V1 backend smoke test", async (t) => {
                 JSON.stringify(demoteOther.json),
             );
         });
+
+        await t.test(
+            "forgot-password and reset-password complete a full cycle",
+            async () => {
+                // The request is accepted whether or not the address exists;
+                // a 404 for an unknown one would make this endpoint an oracle
+                // for which emails have accounts.
+                const requested = await api("/auth/forgot-password", {
+                    method: "POST",
+                    body: { email: `verify-member-${STAMP}@test.local` },
+                });
+                assert.equal(
+                    requested.status,
+                    200,
+                    JSON.stringify(requested.json),
+                );
+
+                const unknown = await api("/auth/forgot-password", {
+                    method: "POST",
+                    body: { email: `nobody-${STAMP}@test.local` },
+                });
+                assert.equal(
+                    unknown.status,
+                    200,
+                    `unknown addresses must not be distinguishable: ${JSON.stringify(unknown.json)}`,
+                );
+
+                // Only the hash is stored, so the emailed token cannot be read
+                // back out. Plant a known pair instead: the controller hashes
+                // whatever arrives and compares, which is the behaviour under
+                // test here.
+                const rawToken = `verify-reset-${STAMP}`;
+                const hashed = crypto
+                    .createHash("sha256")
+                    .update(rawToken)
+                    .digest("hex");
+
+                await mongoose.connection.db.collection("users").updateOne(
+                    { _id: new mongoose.Types.ObjectId(memberId) },
+                    {
+                        $set: {
+                            forgotPasswordToken: hashed,
+                            forgotPasswordExpiry: new Date(
+                                Date.now() + 10 * 60 * 1000,
+                            ),
+                        },
+                    },
+                );
+
+                const wrongToken = await api(
+                    "/auth/reset-password/not-the-token",
+                    { method: "POST", body: { newPassword: "Whatever1!" } },
+                );
+                assert.equal(
+                    wrongToken.status,
+                    400,
+                    JSON.stringify(wrongToken.json),
+                );
+
+                const reset = await api(`/auth/reset-password/${rawToken}`, {
+                    method: "POST",
+                    body: { newPassword: "N3wPassw0rd!" },
+                });
+                assert.equal(reset.status, 200, JSON.stringify(reset.json));
+
+                // The new password works and the old one no longer does.
+                const withNew = await api("/auth/login", {
+                    method: "POST",
+                    body: {
+                        email: `verify-member-${STAMP}@test.local`,
+                        password: "N3wPassw0rd!",
+                    },
+                });
+                assert.equal(withNew.status, 200, JSON.stringify(withNew.json));
+                memberToken = withNew.json.data.accessToken;
+
+                const withOld = await api("/auth/login", {
+                    method: "POST",
+                    body: {
+                        email: `verify-member-${STAMP}@test.local`,
+                        password: "Passw0rd!",
+                    },
+                });
+                assert.equal(withOld.status, 401, JSON.stringify(withOld.json));
+
+                // Single use: the token is cleared by a successful reset.
+                const replay = await api(`/auth/reset-password/${rawToken}`, {
+                    method: "POST",
+                    body: { newPassword: "An0therOne!" },
+                });
+                assert.equal(replay.status, 400, JSON.stringify(replay.json));
+            },
+        );
 
         await t.test(
             "IDOR: child resources are scoped to the project in the URL",

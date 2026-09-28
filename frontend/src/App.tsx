@@ -6,6 +6,8 @@ import { Login } from "./routes/Login";
 import { Register } from "./routes/Register";
 import { Projects } from "./routes/Projects";
 import { ProjectDetail } from "./routes/ProjectDetail";
+import { ForgotPassword } from "./routes/ForgotPassword";
+import { ResetPassword } from "./routes/ResetPassword";
 import { Spinner } from "./components/ui";
 
 function FullPageSpinner() {
@@ -54,6 +56,29 @@ export function App() {
                     </RedirectIfSignedIn>
                 }
             />
+            {/*
+             * The reset link in the email is built from
+             * FORGOT_PASSWORD_REDIRECT_URL + "/" + token, so this path has to
+             * match that env var. Without the route the catch-all below would
+             * swallow the token and bounce the user to /login.
+             */}
+            <Route
+                path="/forgot-password"
+                element={
+                    <RedirectIfSignedIn>
+                        <ForgotPassword />
+                    </RedirectIfSignedIn>
+                }
+            />
+            {/*
+             * Not wrapped in RedirectIfSignedIn, unlike the others. A stale
+             * session restored from localStorage would otherwise bounce this
+             * away and discard the token -- and someone who still has a session
+             * on this device is exactly the person who can have forgotten the
+             * password they set on another one. The token is the authorization
+             * here, not the session.
+             */}
+            <Route path="/reset-password/:token" element={<ResetPassword />} />
 
             <Route
                 element={

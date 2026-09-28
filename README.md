@@ -32,6 +32,7 @@ A React single-page client lives in `frontend/` and consumes that API: sign-in, 
 ### Web client (`frontend/`)
 
 - Bearer-token session with a single-flight refresh, so several queries failing at once cannot spend the same rotating refresh token twice.
+- Forgot-password and reset-password screens. `FORGOT_PASSWORD_REDIRECT_URL` points the emailed link at `/reset-password/<token>` in the client, so that route has to exist for the flow the API implements to be reachable at all.
 - Project list linking into a per-project workspace with Tasks, Notes, Members, and (for admins) Settings tabs.
 - Task board grouped by status, with optimistic status changes that roll back to the previous board when the server refuses the move.
 - Task slide-over: description, assignee, attachments with sizes, and subtasks that any member may tick off.
@@ -123,7 +124,7 @@ The application loads environment variables from `.env` in the project root.
 | `ACCESS_TOKEN_EXPIRY`                                                    | Yes                | User model                  | Access-token lifetime, such as `1d` or `15m`.                                                                                                                                                     |
 | `REFRESH_TOKEN_SECRET`                                                   | Yes                | User model, auth controller | Secret used to sign and verify refresh tokens.                                                                                                                                                    |
 | `REFRESH_TOKEN_EXPIRY`                                                   | Yes                | User model                  | Refresh-token lifetime, such as `10d`.                                                                                                                                                            |
-| `FORGOT_PASSWORD_REDIRECT_URL`                                           | Yes                | Auth controller             | Frontend URL used to build password-reset links.                                                                                                                                                  |
+| `FORGOT_PASSWORD_REDIRECT_URL`                                           | Yes                | Auth controller             | Frontend URL used to build password-reset links. The token is appended as a path segment, so this must match the client's `/reset-password/:token` route.                                         |
 | `MAILTRAP_SMTP_HOST`                                                     | Yes, for email     | Mail utility                | SMTP host for outgoing verification/reset emails.                                                                                                                                                 |
 | `MAILTRAP_SMTP_PORT`                                                     | Yes, for email     | Mail utility                | SMTP port for outgoing email.                                                                                                                                                                     |
 | `MAILTRAP_SMTP_USER`                                                     | Yes, for email     | Mail utility                | SMTP username.                                                                                                                                                                                    |
@@ -353,7 +354,8 @@ plugin array against the wrong copy and fails `tsc --noEmit`.
 - Support removing an individual attachment from a task; today they can only be appended, or removed wholesale with the task.
 - Expand backend coverage beyond the smoke-test script, particularly per-endpoint validation edge cases and token expiry/refresh behaviour.
 - Drag-and-drop on the task board. The status dropdown on each card is keyboard-accessible and works everywhere, so dragging would be an addition to it rather than a replacement.
-- A real reset-password screen in the client; the API supports the flow but the UI has no route for it yet.
+- A screen for email verification. The API's verification link points at `/api/v1/auth/verify-email/:token`, so clicking it in an email shows raw JSON rather than a page.
+- An account screen for changing your password while signed in and resending the verification email; both endpoints exist and neither has a UI.
 
 ## Learning Outcomes
 

@@ -68,16 +68,24 @@ export function Login() {
                     error={error?.fieldErrors.email}
                 />
 
-                <Field
-                    label="Password"
-                    name="password"
-                    type="password"
-                    autoComplete="current-password"
-                    required
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                    error={error?.fieldErrors.password}
-                />
+                <div>
+                    <Field
+                        label="Password"
+                        name="password"
+                        type="password"
+                        autoComplete="current-password"
+                        required
+                        value={password}
+                        onChange={(event) => setPassword(event.target.value)}
+                        error={error?.fieldErrors.password}
+                    />
+                    <Link
+                        to="/forgot-password"
+                        className="mt-1.5 inline-block text-xs text-indigo-600 hover:underline dark:text-indigo-400"
+                    >
+                        Forgot your password?
+                    </Link>
+                </div>
 
                 <Button type="submit" loading={submitting} className="w-full">
                     Sign in
