@@ -59,6 +59,8 @@ const userSchema = new Schema(
                 provider: String,
                 key: String,
                 resourceType: String,
+                // Which local directory holds it; see src/utils/storage.js.
+                folder: String,
             },
             default: {
                 url: `https://placehold.co/200x200`,

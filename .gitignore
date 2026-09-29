@@ -25,6 +25,8 @@ node_modules
 # `git add -A` publishes whatever anyone has uploaded.
 /public/images/*
 !/public/images/.gitkeep
+/public/avatars/*
+!/public/avatars/.gitkeep
 
 # build output
 dist

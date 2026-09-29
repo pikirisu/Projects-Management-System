@@ -32,6 +32,7 @@ A React single-page client lives in `frontend/` and consumes that API: sign-in, 
 - Centralized JSON error handling for `ApiError`, Multer upload errors, Mongo duplicate keys, Mongoose validation/cast errors, malformed ObjectIds, and body-parser rejections (a body over the 16kb limit answers 413 and unparseable JSON answers 400, rather than both reporting a server fault).
 - Passwords are never trimmed and never coerced. Trimming would store something other than what was typed, and a non-string would reach `bcrypt.compare`, which throws.
 - Profile photos reuse the storage abstraction the task attachments use, on a narrower allowlist — images only, 512 KB — because whatever lands there is rendered in an `<img>` on every screen that shows the user. Replacing one deletes the image it replaced, and the response carries only the URL; where the bytes live is the server's business.
+- Uploads are served from two mounts with different headers, because the two kinds are used differently. `/images` (attachments) forces `Content-Disposition: attachment` and keeps helmet's `Cross-Origin-Resource-Policy: same-origin`: arbitrary types land there and the client links to them. `/avatars` drops both, because a photo has to render in an `<img>` from the client's origin — and can safely, since that allowlist is raster images only. `nosniff` stays on both.
 
 ### Web client (`frontend/`)
 
@@ -450,10 +451,6 @@ plugin array against the wrong copy and fails `tsc --noEmit`.
   whatever order the fetch returned. Controlling that needs a position field on the task and an
   endpoint to write it, and a scheme (fractional indexing, or renumbering a column at a time)
   that does not rewrite every row on each move.
-- The client has never been opened in a real browser from this environment. Every screen is
-  covered by jsdom tests, the build succeeds, and the API is exercised end to end against a live
-  server — but none of that is the same as looking at it. Drag-and-drop in particular is a
-  gesture whose feel cannot be asserted in a test.
 
 ## Learning Outcomes
 

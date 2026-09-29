@@ -433,11 +433,12 @@ const updateAvatar = asyncHandler(async (req, res) => {
     }
 
     const previous = user.avatar;
-    const { url, provider, key, resourceType } = await saveUpload(req.file, {
-        kind: "avatars",
-    });
+    const { url, provider, key, resourceType, folder } = await saveUpload(
+        req.file,
+        { kind: "avatars" },
+    );
 
-    user.avatar = { url, provider, key, resourceType };
+    user.avatar = { url, provider, key, resourceType, folder };
     await user.save({ validateBeforeSave: false });
 
     /*

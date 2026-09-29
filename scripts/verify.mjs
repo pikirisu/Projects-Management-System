@@ -74,6 +74,7 @@ test("V1 backend smoke test", async (t) => {
     const createdUserIds = [];
     const createdTaskIds = [];
     const uploadedFiles = [];
+    const uploadedAvatars = [];
 
     try {
         let adminToken, memberToken, adminId, memberId;
@@ -310,6 +311,22 @@ test("V1 backend smoke test", async (t) => {
                 fileRes.status,
                 200,
                 `attachment URL not reachable: ${c.json.data.attachments[0].url}`,
+            );
+
+            /*
+             * Attachments keep the hardening the avatar mount deliberately
+             * gives up. Arbitrary types reach this directory, so a file here
+             * must download rather than render, and must never be sniffed --
+             * the client links to these, it does not embed them.
+             */
+            assert.equal(
+                fileRes.headers.get("content-disposition"),
+                "attachment",
+                "an attachment must download, never render inline",
+            );
+            assert.equal(
+                fileRes.headers.get("x-content-type-options"),
+                "nosniff",
             );
         });
 
@@ -1045,7 +1062,7 @@ test("V1 backend smoke test", async (t) => {
              * this every change would strand a blob forever.
              */
             if (firstUrl.startsWith(process.env.SERVER_URL)) {
-                uploadedFiles.push(secondUrl.split("/").pop());
+                uploadedAvatars.push(secondUrl.split("/").pop());
 
                 const orphan = await fetch(firstUrl);
                 assert.equal(
@@ -1055,6 +1072,44 @@ test("V1 backend smoke test", async (t) => {
                 );
                 const current = await fetch(secondUrl);
                 assert.equal(current.status, 200, "the new image must serve");
+
+                /*
+                 * The headers are the whole point, and the reason this was
+                 * broken in a browser while every test passed: a photo served
+                 * with helmet's default Cross-Origin-Resource-Policy:
+                 * same-origin is blocked outright when the client is on
+                 * another origin, and one served Content-Disposition:
+                 * attachment downloads instead of rendering. fetch() from Node
+                 * honours neither, so only an <img> in a real browser ever
+                 * noticed. These assertions stand in for that.
+                 */
+                assert.equal(
+                    current.headers.get("cross-origin-resource-policy"),
+                    "cross-origin",
+                    "an avatar must be embeddable from the client's origin",
+                );
+                assert.equal(
+                    current.headers.get("content-disposition"),
+                    null,
+                    "an avatar must render, not download",
+                );
+                assert.equal(
+                    current.headers.get("x-content-type-options"),
+                    "nosniff",
+                    "a file that is not really an image must not be sniffed",
+                );
+
+                // The permissive mount must not reach an attachment, or the
+                // hardening on /images could be bypassed by asking for it
+                // under the other path.
+                const crossed = await fetch(
+                    secondUrl.replace("/avatars/", "/images/"),
+                );
+                assert.equal(
+                    crossed.status,
+                    404,
+                    "the two upload directories must stay separate",
+                );
             }
 
             const me = await api("/auth/current-user", { token: memberToken });
@@ -1721,6 +1776,10 @@ test("V1 backend smoke test", async (t) => {
         const imagesDir = path.resolve("public/images");
         for (const name of uploadedFiles) {
             await fs.unlink(path.join(imagesDir, name)).catch(() => {});
+        }
+        const avatarsDir = path.resolve("public/avatars");
+        for (const name of uploadedAvatars) {
+            await fs.unlink(path.join(avatarsDir, name)).catch(() => {});
         }
 
         await mongoose.disconnect();

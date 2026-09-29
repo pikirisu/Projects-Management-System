@@ -4,10 +4,26 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { v2 as cloudinary } from "cloudinary";
 
-const LOCAL_DIR = path.resolve(
-    path.dirname(fileURLToPath(import.meta.url)),
-    "../../public/images",
-);
+/*
+ * Two directories, because the two kinds of upload have to be *served* with
+ * different headers. An attachment is a link the browser downloads, so it is
+ * served Content-Disposition: attachment -- which is precisely what stops an
+ * avatar rendering in an <img>. Splitting them at rest is what lets app.js
+ * give each mount the headers it needs; serving one directory under two paths
+ * would let any attachment be fetched through the permissive one.
+ */
+const LOCAL_DIRS = {
+    attachments: path.resolve(
+        path.dirname(fileURLToPath(import.meta.url)),
+        "../../public/images",
+    ),
+    avatars: path.resolve(
+        path.dirname(fileURLToPath(import.meta.url)),
+        "../../public/avatars",
+    ),
+};
+
+const URL_SEGMENTS = { attachments: "images", avatars: "avatars" };
 
 // Keeps uploads in their own namespace inside the Cloudinary account, and
 // keeps avatars out of the attachment listing: the two have different
@@ -64,35 +80,45 @@ const uploadToCloudinary = (file, folder) =>
         stream.end(file.buffer);
     });
 
-const saveLocally = async (file) => {
-    await fs.mkdir(LOCAL_DIR, { recursive: true });
+const saveLocally = async (file, kind) => {
+    const dir = LOCAL_DIRS[kind];
+    await fs.mkdir(dir, { recursive: true });
     // Never reuse the client's filename: it carries an attacker-controlled
     // extension, and two uploads in the same millisecond would collide.
     const ext = path.extname(file.originalname).toLowerCase();
     const key = `${crypto.randomUUID()}${ext}`;
-    await fs.writeFile(path.join(LOCAL_DIR, key), file.buffer);
+    await fs.writeFile(path.join(dir, key), file.buffer);
     return {
-        url: `${process.env.SERVER_URL}/images/${key}`,
+        url: `${process.env.SERVER_URL}/${URL_SEGMENTS[kind]}/${key}`,
         key,
         resourceType: "local",
+        // Which directory to look in when this is deleted later. Absent on
+        // every row written before avatars existed, all of which are
+        // attachments, which is what resolveLocalPath defaults to.
+        folder: kind,
     };
 };
 
 /**
- * Resolves a stored key to a path inside LOCAL_DIR, or throws.
+ * Resolves a stored key to a path inside its upload directory, or throws.
  *
  * Keys are UUIDs written by saveLocally, so in practice nothing here is
  * attacker-controlled. The check is for the paths that bypass that: a row
  * written by an older version, restored from a backup, or edited directly in
  * the database. A key of "../../src/app.js" would otherwise resolve to a real
  * file and unlink it, turning a task delete into arbitrary file deletion.
+ *
+ * An unrecognised folder falls back to the attachment directory rather than
+ * widening the search: every row that predates avatars is an attachment, and a
+ * folder name that is not one of the two known ones must not select a path.
  */
-export const resolveLocalPath = (key) => {
-    const resolved = path.resolve(LOCAL_DIR, key);
+export const resolveLocalPath = (key, folder = "attachments") => {
+    const dir = LOCAL_DIRS[folder] ?? LOCAL_DIRS.attachments;
+    const resolved = path.resolve(dir, key);
 
     // path.resolve collapses "..", so comparing afterwards is what catches
     // traversal; checking the key for ".." beforehand would miss encodings.
-    if (resolved !== path.join(LOCAL_DIR, path.basename(resolved))) {
+    if (resolved !== path.join(dir, path.basename(resolved))) {
         throw new Error(
             `refusing to delete outside the upload directory: ${key}`,
         );
@@ -129,8 +155,8 @@ export const saveUpload = async (file, { kind = "attachments" } = {}) => {
         };
     }
 
-    const { url, key, resourceType } = await saveLocally(file);
-    return { ...base, url, provider: "local", key, resourceType };
+    const { url, key, resourceType, folder } = await saveLocally(file, kind);
+    return { ...base, url, provider: "local", key, resourceType, folder };
 };
 
 /**
@@ -154,7 +180,9 @@ export const deleteAttachments = async (attachments = []) => {
                         resource_type: attachment.resourceType || "image",
                     });
                 } else {
-                    await fs.unlink(resolveLocalPath(attachment.key));
+                    await fs.unlink(
+                        resolveLocalPath(attachment.key, attachment.folder),
+                    );
                 }
             } catch (error) {
                 console.error(

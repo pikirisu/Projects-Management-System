@@ -26,14 +26,44 @@ app.use(helmet());
 // basic configurations
 app.use(express.json({ limit: "16kb" }));
 app.use(express.urlencoded({ extended: true, limit: "16kb" }));
+/*
+ * Task attachments. Arbitrary file types reach this directory, so they are
+ * forced to download and never sniffed: an uploaded file must not be able to
+ * execute as same-origin script even if it slips past the upload allowlist.
+ * The client links to these rather than embedding them, so a download is
+ * exactly the behaviour wanted.
+ */
 app.use(
-    express.static(publicDir, {
+    "/images",
+    express.static(path.join(publicDir, "images"), {
         setHeaders: (res) => {
-            // Everything under public/ is user-uploaded. Force a download and
-            // forbid MIME sniffing so an uploaded file can never be executed as
-            // same-origin script, even if it slips past the upload allowlist.
             res.setHeader("Content-Disposition", "attachment");
             res.setHeader("X-Content-Type-Options", "nosniff");
+        },
+    }),
+);
+
+/*
+ * Profile photos, which have to render in an <img> -- and did not.
+ *
+ * Two headers stopped them, and neither shows up in anything but a real
+ * browser: helmet's default Cross-Origin-Resource-Policy: same-origin blocks
+ * the load outright whenever the client is served from a different origin than
+ * the API, which is the deployment this project documents; and the
+ * Content-Disposition above turns an image into a download. A fetch() from
+ * Node honours neither, so every test passed while the avatar was broken.
+ *
+ * Serving them inline is safe because of what may reach this directory: the
+ * avatar allowlist is jpeg/png/gif/webp only. SVG is excluded precisely
+ * because it is XML that can carry script, and nosniff stays so a file that is
+ * not really an image cannot be reinterpreted as one that is.
+ */
+app.use(
+    "/avatars",
+    express.static(path.join(publicDir, "avatars"), {
+        setHeaders: (res) => {
+            res.setHeader("X-Content-Type-Options", "nosniff");
+            res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
         },
     }),
 );

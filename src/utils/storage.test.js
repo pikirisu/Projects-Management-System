@@ -8,6 +8,7 @@ import { describe, it } from "node:test";
 import { resolveLocalPath } from "./storage.js";
 
 const LOCAL_DIR = path.resolve(import.meta.dirname, "../../public/images");
+const AVATAR_DIR = path.resolve(import.meta.dirname, "../../public/avatars");
 
 describe("resolveLocalPath", () => {
     it("resolves an ordinary key inside the upload directory", () => {
@@ -33,6 +34,31 @@ describe("resolveLocalPath", () => {
                 `expected ${key} to be refused`,
             );
         }
+    });
+
+    it("resolves an avatar into its own directory", () => {
+        assert.equal(
+            resolveLocalPath("a1.png", "avatars"),
+            path.join(AVATAR_DIR, "a1.png"),
+        );
+    });
+
+    it("falls back to attachments for an unknown or missing folder", () => {
+        // Every row written before avatars existed is an attachment and has no
+        // folder at all; an unrecognised name must not widen the search.
+        for (const folder of [undefined, "", "nope", "../public"]) {
+            assert.equal(
+                resolveLocalPath("a1.png", folder),
+                path.join(LOCAL_DIR, "a1.png"),
+            );
+        }
+    });
+
+    it("refuses to escape an avatar directory too", () => {
+        assert.throws(
+            () => resolveLocalPath("../images/other.png", "avatars"),
+            /outside the upload directory/,
+        );
     });
 
     it("refuses a key that names a subdirectory", () => {

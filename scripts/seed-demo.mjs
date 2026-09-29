@@ -81,7 +81,25 @@ async function ensureAccount(account) {
         );
     }
 
-    return loggedIn.data.accessToken;
+    const token = loggedIn.data.accessToken;
+
+    /*
+     * Registration is skipped on the 409 above, so an account left over from
+     * an earlier run keeps whatever it had -- and accounts created before
+     * registerUser persisted fullName have none at all, which is exactly how
+     * the demo ended up showing usernames where it means to show names. The
+     * name is set every run rather than only on creation, so the workspace
+     * looks the same however old the database is.
+     */
+    if (account.fullName && loggedIn.data.user?.fullName !== account.fullName) {
+        await api("/auth/profile", {
+            method: "PATCH",
+            token,
+            body: { fullName: account.fullName },
+        });
+    }
+
+    return token;
 }
 
 const TASKS = [
