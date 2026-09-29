@@ -435,6 +435,37 @@ describe("ProjectDetail", () => {
         );
     });
 
+    it("surfaces the server's refusal to re-add an existing member", async () => {
+        stubQueries("admin");
+        vi.mocked(api.post).mockRejectedValue(
+            new ApiError(
+                409,
+                "That person is already a member of this project. Change their role instead.",
+            ),
+        );
+        const user = userEvent.setup();
+        renderPage();
+
+        await user.click(await screen.findByRole("tab", { name: /Members/ }));
+        // The trigger is replaced by the form, so the second "Add member" is
+        // the submit button rather than a duplicate of the first.
+        await user.click(
+            await screen.findByRole("button", { name: "Add member" }),
+        );
+        await user.type(screen.getByLabelText("Email"), "dana@example.com");
+        await user.click(screen.getByRole("button", { name: "Add member" }));
+
+        /*
+         * The API used to accept this and overwrite the person's role, which
+         * is how an admin demoted themselves out of their own project. Now it
+         * refuses, and the refusal has to say what to do instead -- the role
+         * control is a few pixels away on the same screen.
+         */
+        expect(await screen.findByRole("alert")).toHaveTextContent(
+            "already a member of this project",
+        );
+    });
+
     it("keeps notes read-only for a project admin", async () => {
         stubQueries("project_admin");
         const user = userEvent.setup();
