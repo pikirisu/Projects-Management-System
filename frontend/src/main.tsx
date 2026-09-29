@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AuthProvider } from "./context/auth";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ApiError } from "./lib/api";
 import { App } from "./App";
 import "./index.css";
@@ -36,11 +37,18 @@ createRoot(container).render(
     <StrictMode>
         <QueryClientProvider client={queryClient}>
             <BrowserRouter>
-                {/* AuthProvider clears the query cache on sign-out, so it has
-                    to sit inside QueryClientProvider. */}
-                <AuthProvider>
-                    <App />
-                </AuthProvider>
+                {/*
+                 * Inside the router so the fallback is styled like the rest of
+                 * the app, and outside AuthProvider so a throw in the session
+                 * restore is caught too rather than blanking the page.
+                 */}
+                <ErrorBoundary>
+                    {/* AuthProvider clears the query cache on sign-out, so it
+                        has to sit inside QueryClientProvider. */}
+                    <AuthProvider>
+                        <App />
+                    </AuthProvider>
+                </ErrorBoundary>
             </BrowserRouter>
         </QueryClientProvider>
     </StrictMode>,

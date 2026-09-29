@@ -34,6 +34,7 @@ A React single-page client lives in `frontend/` and consumes that API: sign-in, 
 
 ### Web client (`frontend/`)
 
+- An error boundary around the app. React unmounts the whole tree when a render throws, so without one a single bad field replaces everything with a blank page; the fallback explains what happened, offers a reload, and keeps the message where a bug report can reach it.
 - Bearer-token session with a single-flight refresh, so several queries failing at once cannot spend the same rotating refresh token twice.
 - A session that ends while the app is open signs the user out and says why. The API client is where a refused refresh is discovered, so it announces it; the auth context listens, drops the session, and the sign-in screen explains that it ended rather than leaving someone to guess why their work went away. A network failure is deliberately not treated as an expiry.
 - Forgot-password and reset-password screens. `FORGOT_PASSWORD_REDIRECT_URL` points the emailed link at `/reset-password/<token>` in the client, so that route has to exist for the flow the API implements to be reachable at all.
@@ -430,7 +431,6 @@ plugin array against the wrong copy and fails `tsc --noEmit`.
 
 ## Future Improvements
 
-- Expand backend coverage beyond the smoke-test script, particularly per-endpoint validation edge cases and token expiry/refresh behaviour.
 - Drag-and-drop on the task board. The status dropdown on each card is keyboard-accessible and works everywhere, so dragging would be an addition to it rather than a replacement.
 - Avatar upload. The user model carries an `avatar` field with a placeholder default, and no endpoint replaces it; the display name is editable through `PATCH /api/v1/auth/profile`.
 
