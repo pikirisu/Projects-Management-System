@@ -16,7 +16,15 @@ node_modules
 *.pdf
 
 # local-only working notes (interview prep, resume evidence)
-docs/
+/docs/
+
+# Local-disk uploads. Everything under here is user content -- a task
+# attachment or a profile photo -- written at runtime by src/utils/storage.js
+# when Cloudinary is not configured. The directory is kept so the server has
+# somewhere to write; its contents are never committed. Without this, one
+# `git add -A` publishes whatever anyone has uploaded.
+/public/images/*
+!/public/images/.gitkeep
 
 # build output
 dist
