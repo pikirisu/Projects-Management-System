@@ -240,12 +240,29 @@ test("V1 backend smoke test", async (t) => {
                     JSON.stringify(membersOk.json),
                 );
 
-                // member is not on otherProjectId at all -> validateProjectPermission's
-                // ProjectMember lookup misses -> existing ApiError(400, "project not found")
+                /*
+                 * member is not on otherProjectId at all, so
+                 * validateProjectPermission's ProjectMember lookup misses.
+                 * 404 rather than 403: a project someone is not a member of
+                 * has to look exactly like one that does not exist, or the
+                 * status itself confirms which ids are real.
+                 */
                 const cross = await api(`/projects/${otherProjectId}/members`, {
                     token: memberToken,
                 });
-                assert.equal(cross.status, 400, JSON.stringify(cross.json));
+                assert.equal(cross.status, 404, JSON.stringify(cross.json));
+                assert.equal(cross.json.message, "Project not found");
+
+                const invented = await api(
+                    "/projects/6abb000000000000000000aa/members",
+                    { token: memberToken },
+                );
+                assert.equal(
+                    invented.status,
+                    cross.status,
+                    "a project that exists must not be distinguishable from one that does not",
+                );
+                assert.equal(invented.json.message, cross.json.message);
             },
         );
 

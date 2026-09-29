@@ -371,8 +371,11 @@ plugin array against the wrong copy and fails `tsc --noEmit`.
 
 - **Project-scoped resource access.** Every task, subtask, and note lookup is constrained to the
   `:projectId` in the URL, not just the child's own id. A mismatch returns **404 rather than 403**,
-  so the response cannot be used to probe whether a resource exists in another project.
-  `scripts/verify.mjs` covers this directly.
+  so the response cannot be used to probe whether a resource exists in another project. The same
+  now applies to the project itself: `validateProjectPermission` answered **400** for a caller who
+  was not a member, which is both the wrong class — the request is perfectly well formed — and a
+  different answer from the 404 an invented id gets, so the status alone told an attacker which
+  ids were real. `scripts/verify.mjs` asserts that the two are indistinguishable.
 - **A password change ends every session.** A reset is what someone does when they believe their
   account is compromised, so it has to actually evict whoever else is holding it. Two things are
   needed, because a session has two halves. `resetForgotPassword` and `changeCurrentPassword`
@@ -437,6 +440,20 @@ plugin array against the wrong copy and fails `tsc --noEmit`.
   deployment should drop the body tokens.
 
 ## Future Improvements
+
+- Pagination and query parameters on the list endpoints. `GET /projects` returns every project a
+  user belongs to and `GET /tasks/:projectId` returns every task in a project, in one response
+  each. That is why the board's search and assignee filter run in the browser. It is fine for a
+  handful of projects and a few dozen tasks, and wrong for a real backlog — the fix is a `limit`,
+  a cursor, and moving the filter to the server, in that order.
+- Ordering within a column. Dragging a card sets its status; where it lands in the column is
+  whatever order the fetch returned. Controlling that needs a position field on the task and an
+  endpoint to write it, and a scheme (fractional indexing, or renumbering a column at a time)
+  that does not rewrite every row on each move.
+- The client has never been opened in a real browser from this environment. Every screen is
+  covered by jsdom tests, the build succeeds, and the API is exercised end to end against a live
+  server — but none of that is the same as looking at it. Drag-and-drop in particular is a
+  gesture whose feel cannot be asserted in a test.
 
 ## Learning Outcomes
 

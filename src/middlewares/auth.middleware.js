@@ -46,7 +46,7 @@ export const validateProjectPermission = (roles = []) => {
         const { projectId } = req.params;
 
         if (!projectId) {
-            throw new ApiError(400, "project id is missing");
+            throw new ApiError(400, "Project id is missing");
         }
 
         const project = await ProjectMember.findOne({
@@ -54,8 +54,16 @@ export const validateProjectPermission = (roles = []) => {
             user: new mongoose.Types.ObjectId(req.user._id),
         });
 
+        /*
+         * 404, not 403 and not 400. The request is well formed, so 400 is
+         * simply the wrong class -- and answering 403 would confirm that the
+         * project exists to anyone who guesses an id, which is the probe the
+         * project-scoped 404s elsewhere in the API are written to prevent. A
+         * project the caller is not a member of is indistinguishable from one
+         * that does not exist, which is what it should look like.
+         */
         if (!project) {
-            throw new ApiError(400, "project not found");
+            throw new ApiError(404, "Project not found");
         }
 
         const givenRole = project ? project.role : undefined;
