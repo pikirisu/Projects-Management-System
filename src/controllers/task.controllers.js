@@ -7,7 +7,7 @@ import { ApiError } from "../utils/api-error.js";
 import { asyncHandler } from "../utils/async-handler.js";
 import mongoose from "mongoose";
 import { UserRolesEnum } from "../utils/constants.js";
-import { saveAttachment, deleteAttachments } from "../utils/storage.js";
+import { saveUpload, deleteAttachments } from "../utils/storage.js";
 
 // A Subtask references only its parent Task, never a project, so authorization
 // has to resolve through that parent. Both failure modes throw an identical 404
@@ -83,7 +83,7 @@ const createTask = asyncHandler(async (req, res) => {
     // returns the subdocument to persist, including the key needed to delete
     // the blob again later.
     const attachments = await Promise.all(
-        files.map((file) => saveAttachment(file)),
+        files.map((file) => saveUpload(file)),
     );
 
     const task = await Task.create({
@@ -124,7 +124,11 @@ const getTaskById = asyncHandler(async (req, res) => {
                             _id: 1,
                             username: 1,
                             fullName: 1,
-                            avatar: 1,
+                            // The URL only. These pipelines do not pass through
+                            // the schema's toJSON, so projecting the whole
+                            // subdocument would hand out the storage provider
+                            // and key that every other route strips.
+                            "avatar.url": 1,
                         },
                     },
                 ],
@@ -149,7 +153,7 @@ const getTaskById = asyncHandler(async (req, res) => {
                                         _id: 1,
                                         username: 1,
                                         fullName: 1,
-                                        avatar: 1,
+                                        "avatar.url": 1,
                                     },
                                 },
                             ],
@@ -191,7 +195,7 @@ const updateTask = asyncHandler(async (req, res) => {
 
     const files = req.files || [];
     const newAttachments = await Promise.all(
-        files.map((file) => saveAttachment(file)),
+        files.map((file) => saveUpload(file)),
     );
 
     const updateOps = {

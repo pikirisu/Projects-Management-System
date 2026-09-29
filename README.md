@@ -31,6 +31,7 @@ A React single-page client lives in `frontend/` and consumes that API: sign-in, 
 - Secrets are stripped on the schema, not per query. The user model's `toJSON` removes the password hash, the refresh token and both temporary-token pairs, so no route can return them by forgetting to.
 - Centralized JSON error handling for `ApiError`, Multer upload errors, Mongo duplicate keys, Mongoose validation/cast errors, malformed ObjectIds, and body-parser rejections (a body over the 16kb limit answers 413 and unparseable JSON answers 400, rather than both reporting a server fault).
 - Passwords are never trimmed and never coerced. Trimming would store something other than what was typed, and a non-string would reach `bcrypt.compare`, which throws.
+- Profile photos reuse the storage abstraction the task attachments use, on a narrower allowlist — images only, 512 KB — because whatever lands there is rendered in an `<img>` on every screen that shows the user. Replacing one deletes the image it replaced, and the response carries only the URL; where the bytes live is the server's business.
 
 ### Web client (`frontend/`)
 
@@ -39,7 +40,7 @@ A React single-page client lives in `frontend/` and consumes that API: sign-in, 
 - A session that ends while the app is open signs the user out and says why. The API client is where a refused refresh is discovered, so it announces it; the auth context listens, drops the session, and the sign-in screen explains that it ended rather than leaving someone to guess why their work went away. A network failure is deliberately not treated as an expiry.
 - Forgot-password and reset-password screens. `FORGOT_PASSWORD_REDIRECT_URL` points the emailed link at `/reset-password/<token>` in the client, so that route has to exist for the flow the API implements to be reachable at all.
 - Email-verification screen, plus an in-app banner that offers an unverified account a fresh link while it still has a session to request one with.
-- Account screen showing the signed-in profile and verification state, with a display-name form and a change-password form that explains up front that every session ends — including the current one — and signs the user out afterwards.
+- Account screen showing the signed-in profile and verification state, with a profile-photo picker that previews the chosen image before sending it, a display-name form, and a change-password form that explains up front that every session ends — including the current one — and signs the user out afterwards.
 - Project list linking into a per-project workspace with Tasks, Notes, Members, and (for admins) Settings tabs.
 - Task board grouped by status, with optimistic status changes that roll back to the previous board when the server refuses the move.
 - Board search and assignee filter, including "assigned to me" and "unassigned", applied in the browser because `GET /tasks/:projectId` returns the whole project in one response and takes no query parameters.
@@ -241,6 +242,7 @@ The current Express app mounts routes under `/api/v1` for health checks, authent
 | `GET`    | `/api/v1/auth/current-user`                                    | Yes           | Returns the authenticated user.                                                                             |
 | `POST`   | `/api/v1/auth/change-password`                                 | Yes           | Changes the authenticated user's password.                                                                  |
 | `PATCH`  | `/api/v1/auth/profile`                                         | Yes           | Updates the authenticated user's display name. Username and email are identity and are not writable here.   |
+| `PATCH`  | `/api/v1/auth/avatar`                                          | Yes           | Replaces the authenticated user's profile photo (multipart, field `avatar`). Deletes the image it replaces. |
 | `POST`   | `/api/v1/auth/resend-email-verification`                       | Yes           | Sends another email verification message.                                                                   |
 | `GET`    | `/api/v1/projects`                                             | Yes           | Lists projects associated with the authenticated user.                                                      |
 | `POST`   | `/api/v1/projects`                                             | Yes           | Creates a project and adds the creator as an admin member.                                                  |
@@ -436,7 +438,6 @@ plugin array against the wrong copy and fails `tsc --noEmit`.
 ## Future Improvements
 
 - Drag-and-drop on the task board. The status dropdown on each card is keyboard-accessible and works everywhere, so dragging would be an addition to it rather than a replacement.
-- Avatar upload. The user model carries an `avatar` field with a placeholder default, and no endpoint replaces it; the display name is editable through `PATCH /api/v1/auth/profile`.
 
 ## Learning Outcomes
 

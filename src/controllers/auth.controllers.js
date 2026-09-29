@@ -4,6 +4,7 @@ import { ApiError } from "../utils/api-error.js";
 import { asyncHandler } from "../utils/async-handler.js";
 import { buildVerificationLink } from "../utils/verification-link.js";
 import { isTokenStale } from "../utils/token-freshness.js";
+import { deleteAttachments, saveUpload } from "../utils/storage.js";
 import {
     emailVerificationMailgenContent,
     forgotPasswordMailgenContent,
@@ -418,6 +419,40 @@ const updateProfile = asyncHandler(async (req, res) => {
         .json(new ApiResponse(200, user, "Profile updated successfully"));
 });
 
+const updateAvatar = asyncHandler(async (req, res) => {
+    if (!req.file) {
+        // multer leaves req.file undefined when the field is absent, and an
+        // empty <input type="file"> submits nothing at all -- so this is the
+        // ordinary "pressed save without choosing anything" case, not an edge.
+        throw new ApiError(400, "Choose an image to upload");
+    }
+
+    const user = await User.findById(req.user._id);
+    if (!user) {
+        throw new ApiError(404, "User does not exist");
+    }
+
+    const previous = user.avatar;
+    const { url, provider, key, resourceType } = await saveUpload(req.file, {
+        kind: "avatars",
+    });
+
+    user.avatar = { url, provider, key, resourceType };
+    await user.save({ validateBeforeSave: false });
+
+    /*
+     * Only after the new one is stored and recorded. Deleting first would lose
+     * the old image if the upload then failed, leaving the account with a
+     * broken URL and no way back. The default placeholder carries no key, so
+     * deleteAttachments skips it.
+     */
+    await deleteAttachments([previous]);
+
+    return res
+        .status(200)
+        .json(new ApiResponse(200, user, "Photo updated successfully"));
+});
+
 const changeCurrentPassword = asyncHandler(async (req, res) => {
     const { oldPassword, newPassword } = req.body;
 
@@ -454,6 +489,7 @@ export {
     verifyEmail,
     resendEmailVerification,
     updateProfile,
+    updateAvatar,
     refreshAccessToken,
     forgotPasswordRequest,
     changeCurrentPassword,

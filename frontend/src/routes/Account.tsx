@@ -1,10 +1,140 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { api, ApiError } from "../lib/api";
 import { useAuth } from "../context/auth";
 import { displayName, formatDate, initials } from "../lib/display";
 import type { User } from "../lib/types";
 import { Alert, Avatar, Badge, Button, Card, Field } from "../components/ui";
+
+/** Matches the server's allowlist, so the file picker offers only what it takes. */
+const AVATAR_ACCEPT = "image/jpeg,image/png,image/gif,image/webp";
+const AVATAR_MAX_BYTES = 512 * 1000;
+
+function AvatarForm({ user }: { user: User }) {
+    const { applyUser } = useAuth();
+    const inputRef = useRef<HTMLInputElement>(null);
+    const [file, setFile] = useState<File | null>(null);
+    const [preview, setPreview] = useState<string | null>(null);
+    const [tooBig, setTooBig] = useState(false);
+
+    /*
+     * The preview is a blob URL, which the browser holds onto until it is
+     * revoked. It is derived in the change handler rather than an effect: the
+     * file being chosen is the event that produces it, and deriving it in an
+     * effect would set state during a render pass for no reason.
+     *
+     * The ref is how the previous URL is found in order to revoke it, since the
+     * state value is not readable from inside the next handler's closure.
+     * createObjectURL is guarded because jsdom does not implement it, and a
+     * missing preview is not worth failing a render over.
+     */
+    const previewRef = useRef<string | null>(null);
+
+    function choose(chosen: File | null) {
+        if (previewRef.current) URL.revokeObjectURL(previewRef.current);
+
+        let next: string | null = null;
+        if (chosen) {
+            try {
+                next = URL.createObjectURL(chosen);
+            } catch {
+                next = null;
+            }
+        }
+
+        previewRef.current = next;
+        setPreview(next);
+        setFile(chosen);
+        // Checked here as well as on the server, so the answer is instant and
+        // costs nobody an upload.
+        // `chosen !== null` rather than Boolean(chosen): the latter does not
+        // narrow the type, so the size read below would not compile.
+        setTooBig(chosen !== null && chosen.size > AVATAR_MAX_BYTES);
+    }
+
+    // Synchronising with something outside React -- the browser's table of live
+    // blob URLs -- which is what an effect is actually for.
+    useEffect(
+        () => () => {
+            if (previewRef.current) URL.revokeObjectURL(previewRef.current);
+        },
+        [],
+    );
+
+    const mutation = useMutation({
+        mutationFn: () => {
+            const form = new FormData();
+            // The field name the route's multer instance listens on.
+            form.append("avatar", file as File);
+            return api.patch<User>("/auth/avatar", form);
+        },
+        onSuccess: (updated) => {
+            applyUser(updated);
+            choose(null);
+            // Without this the same file cannot be chosen twice in a row: the
+            // input keeps its value, so re-picking it fires no change event.
+            if (inputRef.current) inputRef.current.value = "";
+        },
+    });
+
+    const error = mutation.error instanceof ApiError ? mutation.error : null;
+
+    function handleSubmit(event: FormEvent) {
+        event.preventDefault();
+        if (!file || tooBig) return;
+        mutation.mutate();
+    }
+
+    return (
+        <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+            {error && <Alert>{error.message}</Alert>}
+
+            <div className="flex items-center gap-4">
+                <Avatar
+                    src={preview ?? user.avatar?.url}
+                    initials={initials(user)}
+                    title={displayName(user)}
+                    size="lg"
+                />
+                <div className="min-w-0 space-y-1">
+                    <label
+                        htmlFor="avatar"
+                        className="block text-sm font-medium"
+                    >
+                        Profile photo
+                    </label>
+                    <input
+                        ref={inputRef}
+                        id="avatar"
+                        name="avatar"
+                        type="file"
+                        accept={AVATAR_ACCEPT}
+                        onChange={(event) =>
+                            choose(event.target.files?.[0] ?? null)
+                        }
+                        className="block w-full text-sm text-neutral-600 file:mr-3 file:rounded-md file:border-0 file:bg-neutral-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-neutral-900 hover:file:bg-neutral-200 dark:text-neutral-400 dark:file:bg-neutral-800 dark:file:text-neutral-100 dark:hover:file:bg-neutral-700"
+                    />
+                    <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                        JPEG, PNG, GIF or WebP, up to 500 KB.
+                    </p>
+                </div>
+            </div>
+
+            {tooBig && (
+                <Alert>That image is over 500 KB. Choose a smaller one.</Alert>
+            )}
+
+            <Button
+                type="submit"
+                size="sm"
+                loading={mutation.isPending}
+                disabled={!file || tooBig}
+            >
+                Save photo
+            </Button>
+        </form>
+    );
+}
 
 function ProfileForm({ user }: { user: User }) {
     const { applyUser } = useAuth();
@@ -226,7 +356,12 @@ export function Account() {
 
             <Card className="p-4">
                 <p className="mb-4 text-sm font-medium">Profile</p>
-                <ProfileForm user={user} />
+                <div className="space-y-6">
+                    <AvatarForm user={user} />
+                    <div className="border-t border-neutral-200 pt-6 dark:border-neutral-800">
+                        <ProfileForm user={user} />
+                    </div>
+                </div>
             </Card>
 
             <Card className="p-4">

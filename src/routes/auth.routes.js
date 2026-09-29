@@ -9,9 +9,14 @@ import {
     registerUser,
     resendEmailVerification,
     resetForgotPassword,
+    updateAvatar,
     updateProfile,
     verifyEmail,
 } from "../controllers/auth.controllers.js";
+import {
+    AVATAR_FIELD,
+    uploadAvatar,
+} from "../middlewares/multer.middleware.js";
 import { validate } from "../middlewares/validator.middleware.js";
 import {
     userChangeCurrentPasswordValidator,
@@ -57,6 +62,12 @@ router.route("/current-user").get(verifyJWT, getCurrentUser);
 router
     .route("/profile")
     .patch(verifyJWT, userUpdateProfileValidator(), validate, updateProfile);
+// Multipart, so no express-validator chain: the body is parsed by multer, and
+// what there is to validate about the file -- type, size, count -- multer has
+// already decided by the time the controller runs.
+router
+    .route("/avatar")
+    .patch(verifyJWT, uploadAvatar.single(AVATAR_FIELD), updateAvatar);
 router
     .route("/change-password")
     .post(

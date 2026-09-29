@@ -228,7 +228,11 @@ const getProjectMembers = asyncHandler(async (req, res) => {
                             _id: 1,
                             username: 1,
                             fullName: 1,
-                            avatar: 1,
+                            // The URL only. An aggregation does not pass
+                            // through the schema's toJSON, so projecting the
+                            // whole subdocument would hand out the storage
+                            // provider and key that every other route strips.
+                            "avatar.url": 1,
                         },
                     },
                 ],

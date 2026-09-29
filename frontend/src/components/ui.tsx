@@ -375,9 +375,15 @@ export function Avatar({
     src?: string;
     initials: string;
     title?: string;
-    size?: "sm" | "md";
+    size?: "sm" | "md" | "lg";
 }) {
-    const dimensions = size === "sm" ? "size-6 text-[10px]" : "size-8 text-xs";
+    // "lg" is for the account screen, where the photo is the thing being
+    // edited rather than a marker next to a name.
+    const dimensions = {
+        sm: "size-6 text-[10px]",
+        md: "size-8 text-xs",
+        lg: "size-14 text-base",
+    }[size];
     const real = src && !PLACEHOLDER_AVATAR.test(src) ? src : null;
 
     if (real) {

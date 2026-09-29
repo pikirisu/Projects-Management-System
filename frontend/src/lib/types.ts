@@ -30,9 +30,13 @@ export interface User {
     email: string;
     fullName?: string;
     isEmailVerified?: boolean;
+    /*
+     * Just the URL. The server stores which provider holds the image and under
+     * what key so it can delete the old one, and deliberately keeps that out of
+     * the response -- the client has no use for it and should not learn to.
+     */
     avatar?: {
         url: string;
-        localPath?: string;
     };
     createdAt?: string;
 }

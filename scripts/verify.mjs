@@ -943,6 +943,107 @@ test("V1 backend smoke test", async (t) => {
             },
         );
 
+        await t.test("a profile photo replaces the one before it", async () => {
+            const png = (bytes) =>
+                new Blob([new Uint8Array(bytes)], { type: "image/png" });
+            const form = (blob, name, field = "avatar") => {
+                const f = new FormData();
+                f.append(field, blob, name);
+                return f;
+            };
+
+            const nothing = await api("/auth/avatar", {
+                method: "PATCH",
+                token: memberToken,
+                form: new FormData(),
+            });
+            assert.equal(nothing.status, 400, JSON.stringify(nothing.json));
+
+            // The attachment allowlist takes PDFs and .txt; this one must not,
+            // because whatever lands here is rendered in an <img>.
+            const pdf = await api("/auth/avatar", {
+                method: "PATCH",
+                token: memberToken,
+                form: form(
+                    new Blob(["%PDF-1.4"], { type: "application/pdf" }),
+                    "cv.pdf",
+                ),
+            });
+            assert.equal(pdf.status, 415, JSON.stringify(pdf.json));
+
+            const svg = await api("/auth/avatar", {
+                method: "PATCH",
+                token: memberToken,
+                form: form(
+                    new Blob(["<svg onload=alert(1)>"], {
+                        type: "image/svg+xml",
+                    }),
+                    "x.svg",
+                ),
+            });
+            assert.equal(svg.status, 415, JSON.stringify(svg.json));
+
+            const huge = await api("/auth/avatar", {
+                method: "PATCH",
+                token: memberToken,
+                form: form(png(600_000), "huge.png"),
+            });
+            assert.equal(huge.status, 413, JSON.stringify(huge.json));
+
+            const anonymous = await api("/auth/avatar", {
+                method: "PATCH",
+                form: form(png(32), "a.png"),
+            });
+            assert.equal(anonymous.status, 401, JSON.stringify(anonymous.json));
+
+            const first = await api("/auth/avatar", {
+                method: "PATCH",
+                token: memberToken,
+                form: form(png(32), "me.png"),
+            });
+            assert.equal(first.status, 200, JSON.stringify(first.json));
+            const firstUrl = first.json.data.avatar.url;
+            assert.ok(firstUrl, JSON.stringify(first.json.data));
+
+            // The client contract is the URL. Where the bytes live is the
+            // server's business, and sending it invites a dependency on it.
+            assert.deepEqual(Object.keys(first.json.data.avatar), ["url"]);
+
+            const second = await api("/auth/avatar", {
+                method: "PATCH",
+                token: memberToken,
+                form: form(png(48), "me2.png"),
+            });
+            assert.equal(second.status, 200, JSON.stringify(second.json));
+            const secondUrl = second.json.data.avatar.url;
+            assert.notEqual(
+                secondUrl,
+                firstUrl,
+                "a replacement must not reuse the old URL",
+            );
+
+            /*
+             * Only checkable on the local driver, which is what CI runs: an
+             * avatar is replaced far more often than it is deleted, so without
+             * this every change would strand a blob forever.
+             */
+            if (firstUrl.startsWith(process.env.SERVER_URL)) {
+                uploadedFiles.push(secondUrl.split("/").pop());
+
+                const orphan = await fetch(firstUrl);
+                assert.equal(
+                    orphan.status,
+                    404,
+                    "the replaced image must not still be on disk",
+                );
+                const current = await fetch(secondUrl);
+                assert.equal(current.status, 200, "the new image must serve");
+            }
+
+            const me = await api("/auth/current-user", { token: memberToken });
+            assert.equal(me.json.data.avatar.url, secondUrl);
+        });
+
         await t.test("no user-shaped response carries a secret", async () => {
             /*
              * Every route that answers with a user went through a

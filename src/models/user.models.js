@@ -28,19 +28,40 @@ const stripPrivateFields = (_doc, ret) => {
     for (const field of PRIVATE_FIELDS) {
         delete ret[field];
     }
+
+    /*
+     * The avatar carries provider/key/resourceType so the old image can be
+     * deleted when a new one replaces it. None of that is a secret -- both are
+     * recoverable from the URL -- but it is storage bookkeeping, and sending it
+     * invites a client to depend on where the bytes happen to live. The
+     * contract is the URL.
+     */
+    if (ret.avatar) {
+        ret.avatar = { url: ret.avatar.url };
+    }
+
     return ret;
 };
 
 const userSchema = new Schema(
     {
+        /*
+         * provider/key/resourceType are what make the old image deletable when
+         * a new one is uploaded -- the same trio a task attachment carries. The
+         * default has none of them, which is how the placeholder is recognised
+         * as having no stored blob behind it.
+         *
+         * `localPath` used to sit here. Nothing ever wrote or read it.
+         */
         avatar: {
             type: {
                 url: String,
-                localPath: String,
+                provider: String,
+                key: String,
+                resourceType: String,
             },
             default: {
                 url: `https://placehold.co/200x200`,
-                localPath: "",
             },
         },
         username: {

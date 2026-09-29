@@ -131,6 +131,70 @@ describe("Account", () => {
         expect(session.applyUser).not.toHaveBeenCalled();
     });
 
+    it("uploads a chosen photo and updates the cached user", async () => {
+        const updated = makeUser({
+            avatar: { url: "https://cdn.example/new.png" },
+        });
+        patch.mockResolvedValue(updated);
+        const user = userEvent.setup();
+        renderWithProviders(<Account />);
+
+        const save = screen.getByRole("button", { name: "Save photo" });
+        expect(save).toBeDisabled();
+
+        await user.upload(
+            screen.getByLabelText("Profile photo"),
+            new File(["x"], "me.png", { type: "image/png" }),
+        );
+        expect(save).toBeEnabled();
+        await user.click(save);
+
+        // Multipart, not JSON: the file field is what the route's multer
+        // instance listens on, and the browser sets the boundary itself.
+        await waitFor(() => expect(patch).toHaveBeenCalled());
+        const [path, body] = patch.mock.calls[0]!;
+        expect(path).toBe("/auth/avatar");
+        expect(body).toBeInstanceOf(FormData);
+        expect((body as FormData).get("avatar")).toBeInstanceOf(File);
+
+        expect(session.applyUser).toHaveBeenCalledWith(updated);
+    });
+
+    it("refuses an oversized image before spending an upload on it", async () => {
+        const user = userEvent.setup();
+        renderWithProviders(<Account />);
+
+        // The server caps this at 512 KB and answers 413, but the round trip is
+        // the whole cost of a large file -- there is no reason to pay it.
+        const huge = new File([new Uint8Array(600_000)], "huge.png", {
+            type: "image/png",
+        });
+        await user.upload(screen.getByLabelText("Profile photo"), huge);
+
+        expect(screen.getByText(/over 500 KB/)).toBeInTheDocument();
+        expect(
+            screen.getByRole("button", { name: "Save photo" }),
+        ).toBeDisabled();
+        expect(patch).not.toHaveBeenCalled();
+    });
+
+    it("reports a photo the server refuses", async () => {
+        patch.mockRejectedValue(new ApiError(415, "Invalid File Type"));
+        const user = userEvent.setup();
+        renderWithProviders(<Account />);
+
+        await user.upload(
+            screen.getByLabelText("Profile photo"),
+            new File(["x"], "me.png", { type: "image/png" }),
+        );
+        await user.click(screen.getByRole("button", { name: "Save photo" }));
+
+        expect(
+            await screen.findByText("Invalid File Type"),
+        ).toBeInTheDocument();
+        expect(session.applyUser).not.toHaveBeenCalled();
+    });
+
     it("changes the password and then signs the user out", async () => {
         post.mockResolvedValue({});
         const user = userEvent.setup();

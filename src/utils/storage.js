@@ -9,8 +9,13 @@ const LOCAL_DIR = path.resolve(
     "../../public/images",
 );
 
-// Keeps uploads in their own namespace inside the Cloudinary account.
-const CLOUD_FOLDER = "project-camp/attachments";
+// Keeps uploads in their own namespace inside the Cloudinary account, and
+// keeps avatars out of the attachment listing: the two have different
+// lifetimes, and an avatar is replaced far more often than it is deleted.
+const CLOUD_FOLDERS = {
+    attachments: "project-camp/attachments",
+    avatars: "project-camp/avatars",
+};
 
 // Attachment bytes reach this module in memory (see multer.middleware.js) and
 // this is the only place that decides where they land. Two drivers:
@@ -44,11 +49,11 @@ const configureCloudinary = () => {
 };
 
 // The SDK's buffer path is a write stream with a callback, not a promise.
-const uploadToCloudinary = (file) =>
+const uploadToCloudinary = (file, folder) =>
     new Promise((resolve, reject) => {
         const stream = cloudinary.uploader.upload_stream(
             {
-                folder: CLOUD_FOLDER,
+                folder,
                 // "auto" lets Cloudinary classify images vs. raw files (txt, md)
                 // itself; the resolved type comes back on the result and has to
                 // be stored, because destroy() needs it later.
@@ -97,16 +102,24 @@ export const resolveLocalPath = (key) => {
 };
 
 /**
- * Persists one uploaded file and returns the attachment subdocument to store.
+ * Persists one uploaded file and returns the subdocument to store.
  * `provider` and `key` are what make deletion possible later -- without them a
- * removed task would leave its blobs orphaned in Cloudinary forever.
+ * removed task, or a replaced avatar, would leave its blob orphaned in
+ * Cloudinary forever.
+ *
+ * `kind` selects the remote folder and nothing else; the local driver writes
+ * every upload to the same directory under a UUID, so there is nothing to
+ * separate there.
  */
-export const saveAttachment = async (file) => {
+export const saveUpload = async (file, { kind = "attachments" } = {}) => {
     const base = { mimetype: file.mimetype, size: file.size };
 
     if (isCloudinaryConfigured()) {
         configureCloudinary();
-        const result = await uploadToCloudinary(file);
+        const result = await uploadToCloudinary(
+            file,
+            CLOUD_FOLDERS[kind] ?? CLOUD_FOLDERS.attachments,
+        );
         return {
             ...base,
             url: result.secure_url,
@@ -121,12 +134,14 @@ export const saveAttachment = async (file) => {
 };
 
 /**
- * Best-effort cleanup of stored blobs. Failures are logged, never thrown: the
- * task row is already gone by the time this runs, and an orphaned blob is not
- * worth turning a successful delete into a 500 for the caller.
+ * Best-effort cleanup of stored blobs, for anything carrying {provider, key,
+ * resourceType} -- task attachments and replaced avatars alike. Failures are
+ * logged, never thrown: the row is already gone by the time this runs, and an
+ * orphaned blob is not worth turning a successful write into a 500.
  *
- * Attachments written before this module existed have no `key`, so they are
- * skipped rather than crashing on undefined.
+ * Rows written before this module existed have no `key`, so they are skipped
+ * rather than crashing on undefined. The seeded placeholder avatar has none
+ * either, which is exactly why that check has to come first.
  */
 export const deleteAttachments = async (attachments = []) => {
     await Promise.all(
