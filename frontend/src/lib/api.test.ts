@@ -5,6 +5,7 @@ import {
     clearTokens,
     getAccessToken,
     getRefreshToken,
+    onSessionLost,
     request,
     setTokens,
 } from "./api";
@@ -242,5 +243,81 @@ describe("401 handling", () => {
          */
         expect(refreshCalls).toBe(1);
         expect(getRefreshToken()).toBe("refresh-2");
+    });
+});
+
+describe("onSessionLost", () => {
+    const subscriptions: Array<() => void> = [];
+    const subscribe = (listener: () => void) => {
+        subscriptions.push(onSessionLost(listener));
+    };
+
+    afterEach(() => {
+        // The listener set lives on the module, so one left subscribed would
+        // outlive its own test and keep firing through the rest of the file.
+        while (subscriptions.length) subscriptions.pop()?.();
+    });
+
+    it("fires when the server refuses the refresh token", async () => {
+        setTokens({ accessToken: "access-1", refreshToken: "refresh-1" });
+        const listener = vi.fn();
+        subscribe(listener);
+
+        fetchMock.mockImplementation(() => Promise.resolve(unauthorized()));
+
+        await expect(request("/projects")).rejects.toBeInstanceOf(ApiError);
+
+        /*
+         * The client is the only part of the app that learns a session is over.
+         * Without this signal it drops the tokens and says nothing, and the UI
+         * keeps rendering a signed-in shell with the user's name in the header
+         * over panels that all fail.
+         */
+        expect(listener).toHaveBeenCalledTimes(1);
+        expect(getRefreshToken()).toBeNull();
+    });
+
+    it("does not fire when the refresh request never arrives", async () => {
+        setTokens({ accessToken: "access-1", refreshToken: "refresh-1" });
+        const listener = vi.fn();
+        subscribe(listener);
+
+        fetchMock.mockImplementation((input: string) =>
+            input.includes("/auth/refresh-token")
+                ? Promise.reject(new TypeError("Failed to fetch"))
+                : Promise.resolve(unauthorized()),
+        );
+
+        await expect(request("/projects")).rejects.toBeInstanceOf(ApiError);
+
+        // Losing the network for a moment is not the same as being signed out,
+        // and treating it as such would end a session over a dropped packet.
+        expect(listener).not.toHaveBeenCalled();
+        expect(getRefreshToken()).toBe("refresh-1");
+    });
+
+    it("does not fire when there was no session to lose", async () => {
+        const listener = vi.fn();
+        subscribe(listener);
+
+        fetchMock.mockImplementation(() => Promise.resolve(unauthorized()));
+
+        await expect(request("/projects")).rejects.toBeInstanceOf(ApiError);
+
+        // A 401 on a public screen is just a 401.
+        expect(listener).not.toHaveBeenCalled();
+    });
+
+    it("stops calling a listener once it unsubscribes", async () => {
+        setTokens({ accessToken: "access-1", refreshToken: "refresh-1" });
+        const listener = vi.fn();
+        onSessionLost(listener)();
+
+        fetchMock.mockImplementation(() => Promise.resolve(unauthorized()));
+        await expect(request("/projects")).rejects.toBeInstanceOf(ApiError);
+
+        // React remounts in StrictMode, so a subscription that cannot be undone
+        // would fire twice per event and grow for the life of the tab.
+        expect(listener).not.toHaveBeenCalled();
     });
 });

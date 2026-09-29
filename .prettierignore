@@ -1,8 +1,14 @@
 node_modules
-test
 package-lock.json
-docs
 .claude
-public
+
+# Leading slashes anchor these to the repo root. Without one, gitignore syntax
+# matches the name at every depth -- a bare `test` also swallowed
+# frontend/src/test/, the shared render helper and factories that every frontend
+# test imports, so `format:check` stayed green while that directory drifted.
+/test/
+/docs/
+/public/
+
+# Build output, wherever it is produced.
 dist
-frontend/dist

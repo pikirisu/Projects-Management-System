@@ -34,6 +34,7 @@ A React single-page client lives in `frontend/` and consumes that API: sign-in, 
 ### Web client (`frontend/`)
 
 - Bearer-token session with a single-flight refresh, so several queries failing at once cannot spend the same rotating refresh token twice.
+- A session that ends while the app is open signs the user out and says why. The API client is where a refused refresh is discovered, so it announces it; the auth context listens, drops the session, and the sign-in screen explains that it ended rather than leaving someone to guess why their work went away. A network failure is deliberately not treated as an expiry.
 - Forgot-password and reset-password screens. `FORGOT_PASSWORD_REDIRECT_URL` points the emailed link at `/reset-password/<token>` in the client, so that route has to exist for the flow the API implements to be reachable at all.
 - Email-verification screen, plus an in-app banner that offers an unverified account a fresh link while it still has a session to request one with.
 - Account screen showing the signed-in profile and verification state, with a display-name form and a change-password form that explains up front that every session ends — including the current one — and signs the user out afterwards.

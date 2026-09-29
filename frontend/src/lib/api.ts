@@ -106,6 +106,28 @@ interface RequestOptions {
 }
 
 /*
+ * A session can end while the app is open: a password change on another device
+ * revokes this tab's tokens immediately, and a refresh token expires on its own
+ * schedule. The API client is where that is discovered, but only React can act
+ * on it -- without this the tokens are dropped and the UI carries on rendering
+ * a signed-in shell over a wall of failing queries, with the user's own name
+ * still in the header.
+ */
+type SessionLostListener = () => void;
+const sessionLostListeners = new Set<SessionLostListener>();
+
+export function onSessionLost(listener: SessionLostListener) {
+    sessionLostListeners.add(listener);
+    return () => {
+        sessionLostListeners.delete(listener);
+    };
+}
+
+function announceSessionLost() {
+    for (const listener of sessionLostListeners) listener();
+}
+
+/*
  * Refresh is single-flight. Several queries can 401 at once after a reload, and
  * without this each would post its own refresh -- the API rotates the refresh
  * token on every call, so the slowest response would overwrite the newest token
@@ -126,7 +148,11 @@ function refreshSession(): Promise<boolean> {
                     body: JSON.stringify({ refreshToken }),
                 });
                 if (!response.ok) {
+                    // The server refused the refresh token itself, so this
+                    // session is over -- as opposed to the catch below, where
+                    // the request never arrived and retrying may well work.
                     clearTokens();
+                    announceSessionLost();
                     return false;
                 }
                 const envelope =
@@ -137,6 +163,9 @@ function refreshSession(): Promise<boolean> {
                 });
                 return true;
             } catch {
+                // A network blip is not an expired session. Keep the tokens so
+                // the next request can try again instead of signing the user
+                // out because their wifi dropped for a second.
                 return false;
             }
         })().finally(() => {

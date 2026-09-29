@@ -6,7 +6,7 @@ import { AuthShell } from "../components/AuthShell";
 import { Alert, Button, Field } from "../components/ui";
 
 export function Login() {
-    const { login } = useAuth();
+    const { login, sessionExpired } = useAuth();
     const navigate = useNavigate();
 
     const [email, setEmail] = useState("");
@@ -49,6 +49,21 @@ export function Login() {
             }
         >
             <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+                {/*
+                 * Shown when the app signed the user out rather than the user
+                 * doing it. A session that simply stops working is otherwise
+                 * indistinguishable from the app having lost their work, and
+                 * this is the only screen they are left on to explain it. It
+                 * gives way to a failed sign-in: that message is the newer news.
+                 */}
+                {sessionExpired && !error && (
+                    <Alert tone="info">
+                        Your session ended. This happens when a password is
+                        changed or a session is left for too long. Sign in to
+                        pick up where you left off.
+                    </Alert>
+                )}
+
                 {/*
                  * Only the top-level message is shown for a failed sign-in. The
                  * API deliberately answers 401 "Invalid credentials" for both an

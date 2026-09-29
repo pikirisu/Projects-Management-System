@@ -8,7 +8,13 @@ import {
     type ReactNode,
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { api, clearTokens, getRefreshToken, setTokens } from "../lib/api";
+import {
+    api,
+    clearTokens,
+    getRefreshToken,
+    onSessionLost,
+    setTokens,
+} from "../lib/api";
 import type { AuthPayload, User } from "../lib/types";
 
 interface AuthContextValue {
@@ -23,6 +29,12 @@ interface AuthContextValue {
         fullName?: string;
     }) => Promise<void>;
     logout: () => Promise<void>;
+    /**
+     * True when the session ended on its own -- expired, or revoked by a
+     * password change elsewhere -- rather than because the user signed out.
+     * Sign-in says so instead of leaving them to wonder why they are back here.
+     */
+    sessionExpired: boolean;
     /**
      * Replaces the cached user after a profile change. The header, avatars and
      * member lists all read from here, so without it a saved name would only
@@ -44,7 +56,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [status, setStatus] = useState<AuthContextValue["status"]>(() =>
         getRefreshToken() ? "loading" : "anonymous",
     );
+    const [sessionExpired, setSessionExpired] = useState(false);
     const queryClient = useQueryClient();
+
+    /*
+     * The API client discovers a dead session when a refresh is refused, which
+     * can happen under any query at any time. Nothing else moves the app out of
+     * the authenticated state once it is in it, so without this the guards keep
+     * rendering the app shell and every panel shows its own error.
+     */
+    useEffect(
+        () =>
+            onSessionLost(() => {
+                clearTokens();
+                setUser(null);
+                setStatus("anonymous");
+                setSessionExpired(true);
+                // The next account to sign in on this tab must not see these.
+                queryClient.clear();
+            }),
+        [queryClient],
+    );
 
     /*
      * Session restore. The access token lives in memory, so a reload always
@@ -87,6 +119,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         });
         setUser(payload.user);
         setStatus("authenticated");
+        setSessionExpired(false);
     }, []);
 
     const register = useCallback(
@@ -114,6 +147,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         clearTokens();
         setUser(null);
         setStatus("anonymous");
+        // Signing out is not an expiry: the sign-in screen should not tell
+        // someone their session ended when they are the one who ended it.
+        setSessionExpired(false);
         // Otherwise the next account to sign in on this tab would briefly see
         // the previous user's cached projects.
         queryClient.clear();
@@ -122,8 +158,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const applyUser = useCallback((next: User) => setUser(next), []);
 
     const value = useMemo(
-        () => ({ user, status, login, register, logout, applyUser }),
-        [user, status, login, register, logout, applyUser],
+        () => ({
+            user,
+            status,
+            sessionExpired,
+            login,
+            register,
+            logout,
+            applyUser,
+        }),
+        [user, status, sessionExpired, login, register, logout, applyUser],
     );
 
     return <AuthContext value={value}>{children}</AuthContext>;

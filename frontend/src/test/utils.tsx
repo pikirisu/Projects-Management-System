@@ -32,9 +32,7 @@ export function renderWithProviders(
     function Wrapper({ children }: { children: ReactNode }) {
         return (
             <QueryClientProvider client={queryClient}>
-                <MemoryRouter initialEntries={[route]}>
-                    {children}
-                </MemoryRouter>
+                <MemoryRouter initialEntries={[route]}>{children}</MemoryRouter>
             </QueryClientProvider>
         );
     }
@@ -43,7 +41,8 @@ export function renderWithProviders(
 }
 
 let counter = 0;
-const nextId = () => `65a000000000000000000${(counter++ + 10).toString().padStart(3, "0")}`;
+const nextId = () =>
+    `65a000000000000000000${(counter++ + 10).toString().padStart(3, "0")}`;
 
 export function makeUser(overrides: Partial<User> = {}): User {
     const id = overrides._id ?? nextId();
