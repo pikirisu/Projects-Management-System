@@ -7,6 +7,7 @@ import type { User } from "../lib/types";
 const session = vi.hoisted(() => ({
     user: null as User | null,
     logout: vi.fn(),
+    applyUser: vi.fn(),
 }));
 
 vi.mock("../context/auth", () => ({
@@ -16,6 +17,7 @@ vi.mock("../context/auth", () => ({
         login: vi.fn(),
         register: vi.fn(),
         logout: session.logout,
+        applyUser: session.applyUser,
     }),
 }));
 
@@ -23,7 +25,13 @@ vi.mock("../lib/api", async (importOriginal) => {
     const actual = await importOriginal<typeof import("../lib/api")>();
     return {
         ...actual,
-        api: { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() },
+        api: {
+            get: vi.fn(),
+            post: vi.fn(),
+            put: vi.fn(),
+            patch: vi.fn(),
+            delete: vi.fn(),
+        },
     };
 });
 
@@ -31,6 +39,7 @@ const { api, ApiError } = await import("../lib/api");
 const { Account } = await import("./Account");
 
 const post = vi.mocked(api.post);
+const patch = vi.mocked(api.patch);
 
 beforeEach(() => {
     session.user = makeUser({
@@ -39,6 +48,7 @@ beforeEach(() => {
         isEmailVerified: true,
     });
     session.logout.mockReset();
+    session.applyUser.mockReset();
 });
 
 async function fill(
@@ -64,6 +74,61 @@ describe("Account", () => {
         renderWithProviders(<Account />);
 
         expect(screen.getByText("Not verified")).toBeInTheDocument();
+    });
+
+    it("saves a new display name and updates the cached user", async () => {
+        const updated = makeUser({ fullName: "Grace Hopper" });
+        patch.mockResolvedValue(updated);
+        const user = userEvent.setup();
+        renderWithProviders(<Account />);
+
+        const field = screen.getByLabelText("Display name");
+        expect(field).toHaveValue("Dana Owner");
+
+        await user.clear(field);
+        await user.type(field, "  Grace Hopper  ");
+        await user.click(screen.getByRole("button", { name: "Save name" }));
+
+        // Trimmed on the way out, so a stray space is not what gets stored.
+        await waitFor(() =>
+            expect(patch).toHaveBeenCalledWith("/auth/profile", {
+                fullName: "Grace Hopper",
+            }),
+        );
+
+        // The header, avatars and member lists read the cached user, so a
+        // saved name that is not applied here only appears after a reload.
+        expect(session.applyUser).toHaveBeenCalledWith(updated);
+    });
+
+    it("will not submit an unchanged or empty name", async () => {
+        const user = userEvent.setup();
+        renderWithProviders(<Account />);
+
+        const save = screen.getByRole("button", { name: "Save name" });
+        expect(save).toBeDisabled();
+
+        await user.clear(screen.getByLabelText("Display name"));
+        expect(save).toBeDisabled();
+        expect(patch).not.toHaveBeenCalled();
+    });
+
+    it("reports a rejected name", async () => {
+        patch.mockRejectedValue(
+            new ApiError(422, "Some of the submitted fields are invalid", {
+                fullName: "Name must be 80 characters or fewer",
+            }),
+        );
+        const user = userEvent.setup();
+        renderWithProviders(<Account />);
+
+        await user.type(screen.getByLabelText("Display name"), "x");
+        await user.click(screen.getByRole("button", { name: "Save name" }));
+
+        expect(
+            await screen.findByText("Name must be 80 characters or fewer"),
+        ).toBeInTheDocument();
+        expect(session.applyUser).not.toHaveBeenCalled();
     });
 
     it("changes the password and then signs the user out", async () => {

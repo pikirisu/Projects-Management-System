@@ -9,6 +9,7 @@ import {
     registerUser,
     resendEmailVerification,
     resetForgotPassword,
+    updateProfile,
     verifyEmail,
 } from "../controllers/auth.controllers.js";
 import { validate } from "../middlewares/validator.middleware.js";
@@ -18,6 +19,7 @@ import {
     userLoginValidator,
     userRegisterValidator,
     userResetForgotPasswordValidator,
+    userUpdateProfileValidator,
 } from "../validators/index.js";
 import { verifyJWT } from "../middlewares/auth.middleware.js";
 import { authLimiter } from "../middlewares/rate-limit.middleware.js";
@@ -52,6 +54,9 @@ router
 //secure routes
 router.route("/logout").post(verifyJWT, logoutUser);
 router.route("/current-user").get(verifyJWT, getCurrentUser);
+router
+    .route("/profile")
+    .patch(verifyJWT, userUpdateProfileValidator(), validate, updateProfile);
 router
     .route("/change-password")
     .post(

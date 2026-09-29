@@ -51,7 +51,7 @@ const generateAccessAndRefreshTokens = async (userId) => {
 };
 
 const registerUser = asyncHandler(async (req, res) => {
-    const { email, username, password } = req.body;
+    const { email, username, password, fullName } = req.body;
 
     const existedUser = await User.findOne({
         $or: [{ username }, { email }],
@@ -69,6 +69,11 @@ const registerUser = asyncHandler(async (req, res) => {
         email,
         password,
         username,
+        // Optional, and undefined is left out rather than stored as "": the
+        // model treats a missing name as "fall back to the username", and an
+        // empty string would satisfy every truthiness check downstream while
+        // rendering as nothing.
+        ...(fullName?.trim() ? { fullName: fullName.trim() } : {}),
         isEmailVerified: false,
     });
 
@@ -380,6 +385,30 @@ const resetForgotPassword = asyncHandler(async (req, res) => {
         .json(new ApiResponse(200, {}, "Password reset successfully"));
 });
 
+const updateProfile = asyncHandler(async (req, res) => {
+    const { fullName } = req.body;
+
+    // Only fullName for now. username and email are identity: one is the
+    // handle other members are shown, the other is what project invitations
+    // are addressed to and what a password reset is sent to, so neither can
+    // change without a verification flow of its own.
+    const user = await User.findByIdAndUpdate(
+        req.user._id,
+        { $set: { fullName: fullName.trim() } },
+        { new: true },
+    ).select(
+        "-password -refreshToken -emailVerificationToken -emailVerificationExpiry",
+    );
+
+    if (!user) {
+        throw new ApiError(404, "User does not exist");
+    }
+
+    return res
+        .status(200)
+        .json(new ApiResponse(200, user, "Profile updated successfully"));
+});
+
 const changeCurrentPassword = asyncHandler(async (req, res) => {
     const { oldPassword, newPassword } = req.body;
 
@@ -412,6 +441,7 @@ export {
     getCurrentUser,
     verifyEmail,
     resendEmailVerification,
+    updateProfile,
     refreshAccessToken,
     forgotPasswordRequest,
     changeCurrentPassword,

@@ -40,6 +40,17 @@ const userChangeCurrentPasswordValidator = () => {
     ];
 };
 
+const userUpdateProfileValidator = () => {
+    return [
+        body("fullName")
+            .trim()
+            .notEmpty()
+            .withMessage("Name is required")
+            .isLength({ max: 80 })
+            .withMessage("Name must be 80 characters or fewer"),
+    ];
+};
+
 const userForgotPasswordValidator = () => {
     return [
         body("email")
@@ -145,6 +156,7 @@ export {
     userRegisterValidator,
     userLoginValidator,
     userChangeCurrentPasswordValidator,
+    userUpdateProfileValidator,
     userForgotPasswordValidator,
     userResetForgotPasswordValidator,
     createProjectValidator,

@@ -23,6 +23,12 @@ interface AuthContextValue {
         fullName?: string;
     }) => Promise<void>;
     logout: () => Promise<void>;
+    /**
+     * Replaces the cached user after a profile change. The header, avatars and
+     * member lists all read from here, so without it a saved name would only
+     * appear after a reload.
+     */
+    applyUser: (next: User) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -113,9 +119,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         queryClient.clear();
     }, [queryClient]);
 
+    const applyUser = useCallback((next: User) => setUser(next), []);
+
     const value = useMemo(
-        () => ({ user, status, login, register, logout }),
-        [user, status, login, register, logout],
+        () => ({ user, status, login, register, logout, applyUser }),
+        [user, status, login, register, logout, applyUser],
     );
 
     return <AuthContext value={value}>{children}</AuthContext>;

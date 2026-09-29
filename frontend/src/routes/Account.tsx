@@ -3,7 +3,56 @@ import { useMutation } from "@tanstack/react-query";
 import { api, ApiError } from "../lib/api";
 import { useAuth } from "../context/auth";
 import { displayName, formatDate, initials } from "../lib/display";
+import type { User } from "../lib/types";
 import { Alert, Avatar, Badge, Button, Card, Field } from "../components/ui";
+
+function ProfileForm({ user }: { user: User }) {
+    const { applyUser } = useAuth();
+    const [fullName, setFullName] = useState(user.fullName ?? "");
+
+    const mutation = useMutation({
+        mutationFn: () =>
+            api.patch<User>("/auth/profile", { fullName: fullName.trim() }),
+        onSuccess: (updated) => {
+            // The header, avatars and member lists all read the cached user.
+            applyUser(updated);
+        },
+    });
+
+    const error = mutation.error instanceof ApiError ? mutation.error : null;
+    const dirty = fullName.trim() !== (user.fullName ?? "");
+
+    function handleSubmit(event: FormEvent) {
+        event.preventDefault();
+        mutation.mutate();
+    }
+
+    return (
+        <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+            {error && <Alert>{error.message}</Alert>}
+            {mutation.isSuccess && !dirty && <Alert tone="info">Saved.</Alert>}
+
+            <Field
+                label="Display name"
+                name="fullName"
+                required
+                value={fullName}
+                onChange={(event) => setFullName(event.target.value)}
+                hint="Shown to your teammates. Your username and email cannot be changed."
+                error={error?.fieldErrors.fullName}
+            />
+
+            <Button
+                type="submit"
+                size="sm"
+                loading={mutation.isPending}
+                disabled={!fullName.trim() || !dirty}
+            >
+                Save name
+            </Button>
+        </form>
+    );
+}
 
 function ChangePasswordForm() {
     const { logout } = useAuth();
@@ -173,6 +222,11 @@ export function Account() {
                         </dd>
                     </div>
                 </dl>
+            </Card>
+
+            <Card className="p-4">
+                <p className="mb-4 text-sm font-medium">Profile</p>
+                <ProfileForm user={user} />
             </Card>
 
             <Card className="p-4">

@@ -121,6 +121,26 @@ test("V1 backend smoke test", async (t) => {
             assert.equal(c.status, 201, JSON.stringify(c.json));
             outsiderId = c.json.data.user._id;
             createdUserIds.push(outsiderId);
+
+            // The validator accepts fullName and the model declares it, but
+            // registerUser used to destructure only email/username/password --
+            // so the name was accepted, answered 201, and silently dropped.
+            const named = await api("/auth/register", {
+                method: "POST",
+                body: {
+                    email: `verify-named-${STAMP}@test.local`,
+                    username: `vnamed${STAMP}`,
+                    password: "Passw0rd!",
+                    fullName: "Ada Lovelace",
+                },
+            });
+            assert.equal(named.status, 201, JSON.stringify(named.json));
+            assert.equal(
+                named.json.data.user.fullName,
+                "Ada Lovelace",
+                `fullName was not persisted: ${JSON.stringify(named.json.data.user)}`,
+            );
+            createdUserIds.push(named.json.data.user._id);
         });
 
         await t.test("current-user is GET and returns the caller", async () => {
@@ -641,6 +661,80 @@ test("V1 backend smoke test", async (t) => {
                 JSON.stringify(demoteOther.json),
             );
         });
+
+        await t.test(
+            "profile name can be changed, identity cannot",
+            async () => {
+                const updated = await api("/auth/profile", {
+                    method: "PATCH",
+                    token: memberToken,
+                    body: { fullName: "  Grace Hopper  " },
+                });
+                assert.equal(updated.status, 200, JSON.stringify(updated.json));
+                assert.equal(updated.json.data.fullName, "Grace Hopper");
+
+                // The change is what /auth/current-user reports afterwards; the
+                // client caches that response for its header and avatars.
+                const me = await api("/auth/current-user", {
+                    token: memberToken,
+                });
+                assert.equal(me.json.data.fullName, "Grace Hopper");
+
+                // Never echo the secrets back, the same as every other auth route.
+                assert.equal(updated.json.data.password, undefined);
+                assert.equal(updated.json.data.refreshToken, undefined);
+
+                const blank = await api("/auth/profile", {
+                    method: "PATCH",
+                    token: memberToken,
+                    body: { fullName: "   " },
+                });
+                assert.equal(blank.status, 422, JSON.stringify(blank.json));
+
+                const tooLong = await api("/auth/profile", {
+                    method: "PATCH",
+                    token: memberToken,
+                    body: { fullName: "x".repeat(81) },
+                });
+                assert.equal(tooLong.status, 422, JSON.stringify(tooLong.json));
+
+                // username and email are identity, not profile: one is the handle
+                // teammates see, the other is where invitations and password
+                // resets are sent. Neither may ride along on this route.
+                const sneaky = await api("/auth/profile", {
+                    method: "PATCH",
+                    token: memberToken,
+                    body: {
+                        fullName: "Grace Hopper",
+                        username: `hijacked${STAMP}`,
+                        email: `hijacked-${STAMP}@test.local`,
+                        isEmailVerified: true,
+                        role: "admin",
+                    },
+                });
+                assert.equal(sneaky.status, 200, JSON.stringify(sneaky.json));
+                assert.equal(
+                    sneaky.json.data.username,
+                    `vmember${STAMP}`,
+                    "username must not be writable through the profile route",
+                );
+                assert.equal(
+                    sneaky.json.data.email,
+                    `verify-member-${STAMP}@test.local`,
+                    "email must not be writable through the profile route",
+                );
+
+                const anonymous = await api("/auth/profile", {
+                    method: "PATCH",
+                    body: { fullName: "Nobody" },
+                });
+                assert.equal(
+                    anonymous.status,
+                    401,
+                    JSON.stringify(anonymous.json),
+                );
+            },
+        );
 
         await t.test(
             "email verification flips the flag and cannot be replayed",
