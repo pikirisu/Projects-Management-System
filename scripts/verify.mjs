@@ -713,6 +713,52 @@ test("V1 backend smoke test", async (t) => {
             );
             assert.equal(demote.status, 409, JSON.stringify(demote.json));
 
+            /*
+             * The third way to write a role, and the one that used to have no
+             * guard at all. POST /members was an upsert that $set the role
+             * unconditionally, so an admin who typed their own address here
+             * demoted themselves and locked the whole project -- and one admin
+             * could quietly demote another the same way, going around the
+             * check above. Adding now only ever adds.
+             */
+            const reAddSelf = await api(`/projects/${projectId}/members`, {
+                method: "POST",
+                token: adminToken,
+                body: {
+                    email: `verify-admin-${STAMP}@test.local`,
+                    role: "member",
+                },
+            });
+            assert.equal(
+                reAddSelf.status,
+                409,
+                `adding an existing member must not rewrite their role: ${JSON.stringify(reAddSelf.json)}`,
+            );
+
+            const reAddOther = await api(`/projects/${projectId}/members`, {
+                method: "POST",
+                token: adminToken,
+                body: {
+                    email: `verify-member-${STAMP}@test.local`,
+                    role: "admin",
+                },
+            });
+            assert.equal(
+                reAddOther.status,
+                409,
+                `adding an existing member must not rewrite their role: ${JSON.stringify(reAddOther.json)}`,
+            );
+
+            // Still exactly one row for that pair, still the role it had.
+            const roster = await api(`/projects/${projectId}/members`, {
+                token: adminToken,
+            });
+            const rows = roster.json.data.filter(
+                (entry) => entry.user?._id === adminId,
+            );
+            assert.equal(rows.length, 1, "a member must have one row");
+            assert.equal(rows[0].role, "admin");
+
             const remove = await api(
                 `/projects/${projectId}/members/${adminId}`,
                 { method: "DELETE", token: adminToken },

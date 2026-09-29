@@ -390,7 +390,11 @@ plugin array against the wrong copy and fails `tsc --noEmit`.
   `forgotPasswordExpiry` because its list predated those fields. The aggregation pipelines do not
   pass through `toJSON`, but they already `$project` an explicit allowlist.
 - **Every project keeps an admin.** `updateMemberRole` and `deleteMember` refuse a change that
-  would leave a project with no `admin`. This is a liveness property rather than a
+  would leave a project with no `admin`, and `addMembersToProject` cannot change a role at all —
+  it was an upsert that `$set` the role unconditionally, which made it a third write path to the
+  same field and the only one with no guard. An admin who typed their own address into "add a
+  member" demoted themselves and locked the project; one admin could demote another the same way.
+  Adding now answers 409 for someone who is already a member. This is a liveness property rather than a
   confidentiality one, and it is unrecoverable if violated: renaming, deleting, adding a member,
   and changing a role are all gated on `admin`, so an admin-less project cannot be repaired
   through the API at all. Because the count and the write are separate round trips, each path

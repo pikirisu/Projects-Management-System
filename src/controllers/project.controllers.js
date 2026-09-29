@@ -165,25 +165,36 @@ const addMembersToProject = asyncHandler(async (req, res) => {
         throw new ApiError(404, "No account exists with that email address");
     }
 
-    await ProjectMember.findOneAndUpdate(
-        {
-            user: user._id,
-            project: projectId,
-        },
-        {
-            $set: {
-                role,
-            },
-            $setOnInsert: {
-                user: user._id,
-                project: projectId,
-            },
-        },
-        {
-            new: true,
-            upsert: true,
-        },
-    );
+    /*
+     * Adding only ever adds. This used to be an upsert that $set the role
+     * unconditionally, which made it a third way to write a role -- and the
+     * only one with no last-admin guard on it. An admin who typed their own
+     * address here demoted themselves to member, and since every management
+     * route is gated on admin, the project became permanently unmanageable:
+     * nobody could rename it, add anyone, change a role, or delete it. The
+     * same move also let one admin quietly demote another, bypassing the
+     * check in updateMemberRole entirely.
+     */
+    const existing = await ProjectMember.findOne({
+        user: user._id,
+        project: new mongoose.Types.ObjectId(projectId),
+    }).select("_id");
+
+    if (existing) {
+        throw new ApiError(
+            409,
+            "That person is already a member of this project. Change their role instead.",
+        );
+    }
+
+    // The unique index on { project, user } closes the gap between the check
+    // above and this write: a concurrent double-add fails with E11000, which
+    // the central error handler already answers as a 409.
+    await ProjectMember.create({
+        user: user._id,
+        project: new mongoose.Types.ObjectId(projectId),
+        role,
+    });
 
     return res
         .status(201)
