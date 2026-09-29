@@ -41,8 +41,17 @@ const fileFilter = (req, file, cb) => {
 // bytes land, so the same request path works on an ephemeral PaaS filesystem
 // and on a laptop.
 //
-// Memory is bounded by the limits below: at most 5 files per request (set by
-// upload.array in the task routes) at 1 MB each.
+/**
+ * The field a task's files arrive under, and how many of them are accepted.
+ * Exported so the routes and the error handler agree on both: multer reports a
+ * sixth file as LIMIT_UNEXPECTED_FILE on this field, which is indistinguishable
+ * from a genuinely unknown field unless the handler knows the expected name.
+ */
+export const ATTACHMENT_FIELD = "attachments";
+export const MAX_ATTACHMENTS = 5;
+
+// Memory is bounded by the limits below and by MAX_ATTACHMENTS, applied by
+// upload.array in the task routes: at most 5 files per request at 1 MB each.
 export const upload = multer({
     storage: multer.memoryStorage(),
     fileFilter,

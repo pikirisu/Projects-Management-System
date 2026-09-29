@@ -21,7 +21,11 @@ import {
     verifyJWT,
     validateProjectPermission,
 } from "../middlewares/auth.middleware.js";
-import { upload } from "../middlewares/multer.middleware.js";
+import {
+    ATTACHMENT_FIELD,
+    MAX_ATTACHMENTS,
+    upload,
+} from "../middlewares/multer.middleware.js";
 import { AvailableUserRole, UserRolesEnum } from "../utils/constants.js";
 
 const router = Router();
@@ -34,7 +38,7 @@ router
     .get(validateProjectPermission(AvailableUserRole), getTasks)
     .post(
         validateProjectPermission(PROJECT_MANAGERS),
-        upload.array("attachments", 5),
+        upload.array(ATTACHMENT_FIELD, MAX_ATTACHMENTS),
         taskCreateValidator(),
         validate,
         createTask,
@@ -45,7 +49,7 @@ router
     .get(validateProjectPermission(AvailableUserRole), getTaskById)
     .put(
         validateProjectPermission(PROJECT_MANAGERS),
-        upload.array("attachments", 5),
+        upload.array(ATTACHMENT_FIELD, MAX_ATTACHMENTS),
         taskUpdateValidator(),
         validate,
         updateTask,

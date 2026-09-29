@@ -336,6 +336,49 @@ test("V1 backend smoke test", async (t) => {
                     form: spoofed,
                 });
                 assert.equal(r2.status, 415, JSON.stringify(r2.json));
+
+                /*
+                 * multer reports the sixth file as an unexpected field on the
+                 * field it arrived under, so this used to answer "Unexpected
+                 * field" -- true of that file, and no use at all to the person
+                 * deciding which attachment to drop.
+                 */
+                const tooMany = new FormData();
+                tooMany.append("title", "six files");
+                for (let i = 0; i < 6; i += 1) {
+                    tooMany.append(
+                        "attachments",
+                        new Blob([new Uint8Array(8)], { type: "image/png" }),
+                        `f${i}.png`,
+                    );
+                }
+                const r3 = await api(`/tasks/${projectId}`, {
+                    method: "POST",
+                    token: adminToken,
+                    form: tooMany,
+                });
+                assert.equal(r3.status, 400, JSON.stringify(r3.json));
+                assert.match(
+                    r3.json.message,
+                    /at most 5 files/,
+                    `a count overflow must say so: ${JSON.stringify(r3.json)}`,
+                );
+
+                // A genuinely unknown field still says exactly that.
+                const unknownField = new FormData();
+                unknownField.append("title", "unknown field");
+                unknownField.append(
+                    "avatar",
+                    new Blob([new Uint8Array(8)], { type: "image/png" }),
+                    "a.png",
+                );
+                const r4 = await api(`/tasks/${projectId}`, {
+                    method: "POST",
+                    token: adminToken,
+                    form: unknownField,
+                });
+                assert.equal(r4.status, 400, JSON.stringify(r4.json));
+                assert.match(r4.json.message, /Unexpected field/);
             },
         );
 

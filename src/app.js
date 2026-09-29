@@ -70,6 +70,10 @@ import projectRouter from "./routes/project.routes.js";
 import taskRouter from "./routes/task.routes.js";
 import noteRouter from "./routes/note.routes.js";
 import { ApiError } from "./utils/api-error.js";
+import {
+    ATTACHMENT_FIELD,
+    MAX_ATTACHMENTS,
+} from "./middlewares/multer.middleware.js";
 import { globalLimiter } from "./middlewares/rate-limit.middleware.js";
 
 app.use("/api/v1", globalLimiter);
@@ -100,10 +104,21 @@ app.use((err, req, res, next) => {
     // which would otherwise surface as an opaque 500.
     if (err instanceof multer.MulterError) {
         const statusCode = err.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+        /*
+         * multer reports one file too many as LIMIT_UNEXPECTED_FILE on the
+         * field it arrived under, so someone who attached six files was told
+         * "Unexpected field" -- true of the sixth file, and no help at all to
+         * the person who has to work out what to remove.
+         */
+        const tooMany =
+            err.code === "LIMIT_UNEXPECTED_FILE" &&
+            err.field === ATTACHMENT_FIELD;
         return res.status(statusCode).json({
             statusCode,
             data: null,
-            message: err.message,
+            message: tooMany
+                ? `You can attach at most ${MAX_ATTACHMENTS} files at once`
+                : err.message,
             success: false,
             errors: err.field ? [{ [err.field]: err.code }] : [],
         });
