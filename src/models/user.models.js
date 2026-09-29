@@ -3,6 +3,34 @@ import brcypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 
+/*
+ * Fields that must never reach a response body: credentials, the tokens that
+ * can be exchanged for them, and internal session bookkeeping.
+ *
+ * Each query used to strip these by hand with .select("-password ..."), which
+ * is a denylist maintained in one place per controller -- GET
+ * /auth/current-user was returning forgotPasswordToken and
+ * forgotPasswordExpiry because its list was written before those fields
+ * existed and never revisited. Doing it on the schema instead means a field
+ * added later is private by default rather than public by default.
+ */
+const PRIVATE_FIELDS = [
+    "password",
+    "refreshToken",
+    "forgotPasswordToken",
+    "forgotPasswordExpiry",
+    "emailVerificationToken",
+    "emailVerificationExpiry",
+    "credentialsChangedAt",
+];
+
+const stripPrivateFields = (_doc, ret) => {
+    for (const field of PRIVATE_FIELDS) {
+        delete ret[field];
+    }
+    return ret;
+};
+
 const userSchema = new Schema(
     {
         avatar: {
@@ -45,6 +73,15 @@ const userSchema = new Schema(
         refreshToken: {
             type: String,
         },
+        /*
+         * When this account's sessions were last invalidated. Access tokens
+         * are stateless, so nothing else can evict one before it expires;
+         * any token issued before this instant is refused. Unset on accounts
+         * that have never changed a password.
+         */
+        credentialsChangedAt: {
+            type: Date,
+        },
         forgotPasswordToken: {
             type: String,
         },
@@ -60,6 +97,16 @@ const userSchema = new Schema(
     },
     {
         timestamps: true,
+        /*
+         * res.json() is JSON.stringify(), which calls toJSON() on every nested
+         * document -- so this covers each route that answers with a user, and
+         * any added later. The aggregation pipelines do not pass through here,
+         * but they already $project an explicit allowlist of public fields.
+         *
+         * toObject is deliberately left alone: server-side code reads
+         * this.password to compare a hash, and that has to keep working.
+         */
+        toJSON: { transform: stripPrivateFields },
     },
 );
 

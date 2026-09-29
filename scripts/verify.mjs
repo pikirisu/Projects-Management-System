@@ -1,7 +1,8 @@
 // End-to-end smoke test for the V1 backend.
 //
 // Preconditions:
-//   - `npm run dev` (or `npm start`) already running.
+//   - `npm run dev` (or `npm start`) already running, started with
+//     RATE_LIMIT_ENABLED=false so repeated runs are not throttled.
 //   - .env's MONGO_URI reachable and SERVER_URL pointing at that same running server.
 //
 // Run with: node scripts/verify.mjs
@@ -46,6 +47,24 @@ async function api(pathname, { method = "GET", token, body, form } = {}) {
         ...(requestBody === undefined ? {} : { body: requestBody }),
     });
     const json = await res.json().catch(() => null);
+
+    /*
+     * 429 is never an expected answer here, and when it arrives it arrives for
+     * every remaining request -- a couple of hundred assertions fail at once
+     * and none of them say why. The budget is per server process and the
+     * window is fifteen minutes, so two consecutive runs are enough to trip it.
+     */
+    if (res.status === 429) {
+        throw new Error(
+            `The server throttled ${method} ${pathname}: ${json?.message ?? "429"}.
+
+This suite makes a few hundred requests per run, so a second run inside the
+rate-limit window exhausts the budget. Start the server with
+RATE_LIMIT_ENABLED=false -- the limiter is read in the server process, so
+setting the flag on this script has no effect at all.`,
+        );
+    }
+
     return { status: res.status, json };
 }
 
@@ -736,6 +755,136 @@ test("V1 backend smoke test", async (t) => {
             },
         );
 
+        await t.test("no user-shaped response carries a secret", async () => {
+            /*
+             * Every route that answers with a user went through a
+             * hand-written .select("-password -refreshToken ...") denylist,
+             * one per query. GET /auth/current-user's list was written
+             * before the forgot-password fields existed and never
+             * revisited, so it returned forgotPasswordToken and
+             * forgotPasswordExpiry to the browser. The fix is a toJSON
+             * transform on the schema; this test is the thing that notices
+             * when the next field is added to the model.
+             */
+            const PRIVATE = [
+                "password",
+                "refreshToken",
+                "forgotPasswordToken",
+                "forgotPasswordExpiry",
+                "emailVerificationToken",
+                "emailVerificationExpiry",
+                "credentialsChangedAt",
+            ];
+            /*
+             * Checking the known secrets is not enough on its own: the whole
+             * failure mode here is a field nobody thought to list. So the
+             * public shape is asserted exactly, and adding anything to the
+             * model fails this test until it has been classified -- public
+             * (add it here) or private (add it to the schema's transform).
+             */
+            const PUBLIC = [
+                "_id",
+                "avatar",
+                "username",
+                "email",
+                "fullName",
+                "isEmailVerified",
+                "createdAt",
+                "updatedAt",
+                "__v",
+            ];
+            const assertClean = (where, payload) => {
+                assert.ok(payload, `${where} returned no user`);
+                for (const field of PRIVATE) {
+                    assert.equal(
+                        payload[field],
+                        undefined,
+                        `${where} leaks ${field}: ${JSON.stringify(payload)}`,
+                    );
+                }
+                const unexpected = Object.keys(payload).filter(
+                    (key) => !PUBLIC.includes(key),
+                );
+                assert.deepEqual(
+                    unexpected,
+                    [],
+                    `${where} returned fields that are neither public nor stripped: ${unexpected.join(", ")}`,
+                );
+            };
+
+            const email = `verify-leak-${STAMP}@test.local`;
+            const password = "Passw0rd!";
+
+            const registered = await api("/auth/register", {
+                method: "POST",
+                body: {
+                    email,
+                    username: `vleak${STAMP}`,
+                    password,
+                    fullName: "Leak Probe",
+                },
+            });
+            assert.equal(
+                registered.status,
+                201,
+                JSON.stringify(registered.json),
+            );
+            createdUserIds.push(registered.json.data.user._id);
+            assertClean("register", registered.json.data.user);
+
+            // Populates forgotPasswordToken/Expiry on the document, which
+            // is what current-user used to hand back.
+            await api("/auth/forgot-password", {
+                method: "POST",
+                body: { email },
+            });
+
+            const login = await api("/auth/login", {
+                method: "POST",
+                body: { email, password },
+            });
+            assert.equal(login.status, 200, JSON.stringify(login.json));
+            assertClean("login", login.json.data.user);
+            const token = login.json.data.accessToken;
+
+            assertClean(
+                "current-user",
+                (await api("/auth/current-user", { token })).json.data,
+            );
+            assertClean(
+                "profile",
+                (
+                    await api("/auth/profile", {
+                        method: "PATCH",
+                        token,
+                        body: { fullName: "Leak Probe" },
+                    })
+                ).json.data,
+            );
+
+            // credentialsChangedAt only exists once a password changes.
+            const changed = await api("/auth/change-password", {
+                method: "POST",
+                token,
+                body: { oldPassword: password, newPassword: "Str0nger!" },
+            });
+            assert.equal(changed.status, 200, JSON.stringify(changed.json));
+
+            const after = await api("/auth/login", {
+                method: "POST",
+                body: { email, password: "Str0nger!" },
+            });
+            assertClean("login after a change", after.json.data.user);
+            assertClean(
+                "current-user after a change",
+                (
+                    await api("/auth/current-user", {
+                        token: after.json.data.accessToken,
+                    })
+                ).json.data,
+            );
+        });
+
         await t.test(
             "email verification flips the flag and cannot be replayed",
             async () => {
@@ -856,8 +1005,11 @@ test("V1 backend smoke test", async (t) => {
                 );
 
                 // Captured before the reset: this is the session that a
-                // reset is supposed to evict.
+                // reset is supposed to evict. Both halves of it -- the refresh
+                // token the client renews with, and the access token it is
+                // using right now.
                 const staleRefresh = memberRefreshToken;
+                const staleAccess = memberToken;
 
                 const reset = await api(`/auth/reset-password/${rawToken}`, {
                     method: "POST",
@@ -876,6 +1028,37 @@ test("V1 backend smoke test", async (t) => {
                     staleReplay.status,
                     401,
                     `refresh token issued before the reset still works: ${JSON.stringify(staleReplay.json)}`,
+                );
+
+                /*
+                 * The access token is the other half of the same promise, and
+                 * the half that used to survive: it is a stateless JWT, so
+                 * clearing the stored refresh token does not touch it. Before
+                 * credentialsChangedAt, a token captured before the reset kept
+                 * full read *and write* access for a whole ACCESS_TOKEN_EXPIRY
+                 * -- a day, on the configuration the README documents.
+                 */
+                const staleRead = await api("/auth/current-user", {
+                    token: staleAccess,
+                });
+                assert.equal(
+                    staleRead.status,
+                    401,
+                    `access token issued before the reset still reads: ${JSON.stringify(staleRead.json)}`,
+                );
+
+                const staleWrite = await api("/projects", {
+                    method: "POST",
+                    token: staleAccess,
+                    body: {
+                        name: `evicted ${STAMP}`,
+                        description: "must never be created",
+                    },
+                });
+                assert.equal(
+                    staleWrite.status,
+                    401,
+                    `access token issued before the reset still writes: ${JSON.stringify(staleWrite.json)}`,
                 );
 
                 // The new password works and the old one no longer does.
@@ -903,6 +1086,17 @@ test("V1 backend smoke test", async (t) => {
                 // caller's own session too: the API cannot tell this request's
                 // refresh token apart from anybody else's.
                 const beforeChange = withNew.json.data.refreshToken;
+                const accessBeforeChange = withNew.json.data.accessToken;
+
+                /*
+                 * A JWT's iat is whole seconds, so a token minted in the same
+                 * second as the change is deliberately kept -- otherwise a
+                 * reset would intermittently refuse the sign-in that follows
+                 * it. The login above is milliseconds old, so wait out that
+                 * second rather than assert something the rule does not claim.
+                 */
+                await new Promise((resolve) => setTimeout(resolve, 1100));
+
                 const changed = await api("/auth/change-password", {
                     method: "POST",
                     token: memberToken,
@@ -921,6 +1115,15 @@ test("V1 backend smoke test", async (t) => {
                     afterChange.status,
                     401,
                     `refresh token issued before the change still works: ${JSON.stringify(afterChange.json)}`,
+                );
+
+                const accessAfterChange = await api("/auth/current-user", {
+                    token: accessBeforeChange,
+                });
+                assert.equal(
+                    accessAfterChange.status,
+                    401,
+                    `access token issued before the change still works: ${JSON.stringify(accessAfterChange.json)}`,
                 );
 
                 // Back on the original password, with a fresh session for the

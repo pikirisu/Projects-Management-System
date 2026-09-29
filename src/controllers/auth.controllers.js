@@ -3,6 +3,7 @@ import { ApiResponse } from "../utils/api-response.js";
 import { ApiError } from "../utils/api-error.js";
 import { asyncHandler } from "../utils/async-handler.js";
 import { buildVerificationLink } from "../utils/verification-link.js";
+import { isTokenStale } from "../utils/token-freshness.js";
 import {
     emailVerificationMailgenContent,
     forgotPasswordMailgenContent,
@@ -290,6 +291,13 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
             throw new ApiError(401, "Refresh token is expired");
         }
 
+        // Belt and braces: clearing refreshToken on a password change already
+        // fails the comparison above, but a future path that rotates the token
+        // without clearing it would otherwise hand back a live session.
+        if (isTokenStale(decodedToken?.iat, user.credentialsChangedAt)) {
+            throw new ApiError(401, "Refresh token is expired");
+        }
+
         const { accessToken, refreshToken: newRefreshToken } =
             await generateAccessAndRefreshTokens(user._id);
 
@@ -376,6 +384,7 @@ const resetForgotPassword = asyncHandler(async (req, res) => {
     // See the note above generateAccessAndRefreshTokens: the reset is the point
     // at which any session opened with the old password has to stop working.
     user.refreshToken = undefined;
+    user.credentialsChangedAt = new Date();
     await user.save({ validateBeforeSave: false });
 
     return res
@@ -425,6 +434,9 @@ const changeCurrentPassword = asyncHandler(async (req, res) => {
     // The caller has to sign in again too, which is the honest tradeoff -- the
     // API cannot tell this request's own refresh token apart from any other.
     user.refreshToken = undefined;
+    // Clearing the refresh token alone leaves already-issued access tokens
+    // working until they expire. verifyJWT refuses anything older than this.
+    user.credentialsChangedAt = new Date();
     await user.save({ validateBeforeSave: false });
 
     return res

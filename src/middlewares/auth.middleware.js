@@ -2,6 +2,7 @@ import { User } from "../models/user.models.js";
 import { ProjectMember } from "../models/projectmember.models.js";
 import { ApiError } from "../utils/api-error.js";
 import { asyncHandler } from "../utils/async-handler.js";
+import { isTokenStale } from "../utils/token-freshness.js";
 import mongoose from "mongoose";
 import jwt from "jsonwebtoken";
 
@@ -23,6 +24,13 @@ export const verifyJWT = asyncHandler(async (req, res, next) => {
         if (!user) {
             throw new ApiError(401, "Invalid access token");
         }
+
+        // A password change or reset ends every session, including the ones
+        // carrying an access token that has not expired yet.
+        if (isTokenStale(decodedToken?.iat, user.credentialsChangedAt)) {
+            throw new ApiError(401, "Invalid access token");
+        }
+
         req.user = user;
         next();
     } catch {

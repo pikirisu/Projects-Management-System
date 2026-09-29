@@ -27,7 +27,8 @@ A React single-page client lives in `frontend/` and consumes that API: sign-in, 
 - Cascading project deletes: removing a project also removes its members, tasks, subtasks, notes, and stored attachment blobs.
 - Security headers via `helmet`, and per-IP rate limiting with a stricter budget on authentication endpoints.
 - Hardened auth cookies (`httpOnly`, `SameSite`, and a `maxAge` matching the token's own expiry).
-- Changing a password ends every session: both the reset and the signed-in change clear the stored refresh token, so credentials issued before the change stop working.
+- Changing a password ends every session: the reset and the signed-in change both clear the stored refresh token and stamp the account, and every access token issued before that stamp is refused. Nothing issued before the change keeps working, including a token already in someone else's hands.
+- Secrets are stripped on the schema, not per query. The user model's `toJSON` removes the password hash, the refresh token and both temporary-token pairs, so no route can return them by forgetting to.
 - Centralized JSON error handling for `ApiError`, Multer upload errors, Mongo duplicate keys, Mongoose validation/cast errors, and malformed ObjectIds.
 
 ### Web client (`frontend/`)
@@ -288,12 +289,16 @@ This is a backend API project, so no application UI screenshots are available in
 It also runs on every push and pull request via `.github/workflows/ci.yml`, against a real MongoDB service container on `ubuntu-latest`. That workflow additionally imports the whole module graph on a case-sensitive filesystem, which catches import-path casing mistakes that a Windows or macOS machine cannot detect locally.
 
 ```bash
-npm run dev                  # in one terminal
-RATE_LIMIT_ENABLED=false npm run verify   # in another, once the server is up
+RATE_LIMIT_ENABLED=false npm run dev   # in one terminal
+npm run verify                         # in another, once the server is up
 ```
 
-Disabling the rate limiter matters: the script makes several auth calls per run and would
-otherwise exhaust the auth budget after a few consecutive runs.
+The flag belongs on the **server**, not on `npm run verify`. The limiter is read inside the
+request handler, so a value set in the test script's own environment has no effect on the
+process doing the limiting. This matters because the script makes a few hundred requests per
+run against a default budget of 300 per fifteen minutes, so a second run inside that window is
+throttled; `api()` turns the resulting 429 into one explanatory failure rather than a few
+hundred silent ones.
 
 ### Linting
 
@@ -362,13 +367,25 @@ plugin array against the wrong copy and fails `tsc --noEmit`.
   `:projectId` in the URL, not just the child's own id. A mismatch returns **404 rather than 403**,
   so the response cannot be used to probe whether a resource exists in another project.
   `scripts/verify.mjs` covers this directly.
-- **A password change ends every session.** `resetForgotPassword` and
-  `changeCurrentPassword` both clear the stored refresh token. A reset is what someone does when
-  they believe their account is compromised, so it has to actually evict whoever else is holding
-  it — without this, a refresh token minted before the reset kept renewing itself for its full
-  lifetime. Access tokens are stateless JWTs and cannot be revoked individually, so one already
-  issued stays valid until it expires; clearing the refresh token caps that residual window at a
-  single `ACCESS_TOKEN_EXPIRY`. `scripts/verify.mjs` asserts both paths.
+- **A password change ends every session.** A reset is what someone does when they believe their
+  account is compromised, so it has to actually evict whoever else is holding it. Two things are
+  needed, because a session has two halves. `resetForgotPassword` and `changeCurrentPassword`
+  clear the stored refresh token, which stops the other party renewing; they also set
+  `credentialsChangedAt`, and `verifyJWT` refuses any access token issued before it. A JWT cannot
+  be revoked individually without a server-side denylist, but every token one user holds can be
+  revoked at once by timestamp, which is exactly the grain this needs. Without the second half an
+  access token captured before the reset kept full read **and write** access for a whole
+  `ACCESS_TOKEN_EXPIRY` — a day, on the configuration below. `isTokenStale` compares in whole
+  seconds and keeps a token minted in the same second as the change: `iat` has one-second
+  resolution, so a stricter comparison would intermittently refuse the sign-in that a reset
+  exists to enable. `scripts/verify.mjs` asserts both halves on both paths.
+- **Secrets are stripped where the field is declared.** The user schema's `toJSON` deletes the
+  password hash, the refresh token, both temporary-token pairs and `credentialsChangedAt`, so
+  every route that answers with a user is covered, including ones added later. This replaced a
+  per-query `.select("-password -refreshToken …")` denylist that had to be repeated and kept in
+  step with the model — `GET /auth/current-user` was returning `forgotPasswordToken` and
+  `forgotPasswordExpiry` because its list predated those fields. The aggregation pipelines do not
+  pass through `toJSON`, but they already `$project` an explicit allowlist.
 - **Every project keeps an admin.** `updateMemberRole` and `deleteMember` refuse a change that
   would leave a project with no `admin`. This is a liveness property rather than a
   confidentiality one, and it is unrecoverable if violated: renaming, deleting, adding a member,
@@ -411,7 +428,6 @@ plugin array against the wrong copy and fails `tsc --noEmit`.
 
 ## Future Improvements
 
-- Support removing an individual attachment from a task; today they can only be appended, or removed wholesale with the task.
 - Expand backend coverage beyond the smoke-test script, particularly per-endpoint validation edge cases and token expiry/refresh behaviour.
 - Drag-and-drop on the task board. The status dropdown on each card is keyboard-accessible and works everywhere, so dragging would be an addition to it rather than a replacement.
 - Avatar upload. The user model carries an `avatar` field with a placeholder default, and no endpoint replaces it; the display name is editable through `PATCH /api/v1/auth/profile`.
