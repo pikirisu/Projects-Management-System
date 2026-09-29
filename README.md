@@ -29,7 +29,8 @@ A React single-page client lives in `frontend/` and consumes that API: sign-in, 
 - Hardened auth cookies (`httpOnly`, `SameSite`, and a `maxAge` matching the token's own expiry).
 - Changing a password ends every session: the reset and the signed-in change both clear the stored refresh token and stamp the account, and every access token issued before that stamp is refused. Nothing issued before the change keeps working, including a token already in someone else's hands.
 - Secrets are stripped on the schema, not per query. The user model's `toJSON` removes the password hash, the refresh token and both temporary-token pairs, so no route can return them by forgetting to.
-- Centralized JSON error handling for `ApiError`, Multer upload errors, Mongo duplicate keys, Mongoose validation/cast errors, and malformed ObjectIds.
+- Centralized JSON error handling for `ApiError`, Multer upload errors, Mongo duplicate keys, Mongoose validation/cast errors, malformed ObjectIds, and body-parser rejections (a body over the 16kb limit answers 413 and unparseable JSON answers 400, rather than both reporting a server fault).
+- Passwords are never trimmed and never coerced. Trimming would store something other than what was typed, and a non-string would reach `bcrypt.compare`, which throws.
 
 ### Web client (`frontend/`)
 

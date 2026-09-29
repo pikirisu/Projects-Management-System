@@ -109,6 +109,26 @@ app.use((err, req, res, next) => {
         });
     }
 
+    /*
+     * express.json() rejects a body that is too large or not valid JSON before
+     * any route sees it. Those arrive as http-errors carrying a 4xx status and
+     * expose: true, which is the library's way of saying the message was
+     * written for the client. Without this branch they fell through to the 500
+     * below, so a client that sent 100kb was told the *server* had a problem --
+     * and the 5xx rate counted requests that were never servable.
+     */
+    if (err?.expose === true && err?.status >= 400 && err?.status < 500) {
+        const statusCode = err.status;
+        return res.status(statusCode).json({
+            statusCode,
+            data: null,
+            message:
+                statusCode === 413 ? "Request body is too large" : err.message,
+            success: false,
+            errors: [],
+        });
+    }
+
     // Mongo duplicate key: a unique index rejected the write. This is a client
     // conflict (409), not a server fault.
     if (err?.code === 11000) {

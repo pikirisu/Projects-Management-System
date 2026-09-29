@@ -569,6 +569,105 @@ test("V1 backend smoke test", async (t) => {
             },
         );
 
+        await t.test("bad input is refused, not crashed", async () => {
+            /*
+             * Every case here answered 500 before. A 5xx tells the caller
+             * the server broke when in fact the request did, gives them
+             * nothing to correct, and buries real faults in the error rate.
+             */
+            const objectPassword = await api("/auth/login", {
+                method: "POST",
+                body: {
+                    email: `verify-admin-${STAMP}@test.local`,
+                    password: { $ne: null },
+                },
+            });
+            assert.equal(
+                objectPassword.status,
+                422,
+                `a non-string password must not reach bcrypt: ${JSON.stringify(objectPassword.json)}`,
+            );
+
+            // express.json caps the body at 16kb and throws its own error,
+            // which used to fall past every branch of the error handler.
+            const tooLarge = await api("/projects", {
+                method: "POST",
+                token: adminToken,
+                body: { name: "x".repeat(100_000), description: "d" },
+            });
+            assert.equal(
+                tooLarge.status,
+                413,
+                `an oversized body must be a 413: ${JSON.stringify(tooLarge.json)}`,
+            );
+
+            const malformed = await fetch(`${BASE}/projects`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${adminToken}`,
+                },
+                body: "{not json",
+            });
+            assert.equal(
+                malformed.status,
+                400,
+                "unparseable JSON must be a 400",
+            );
+
+            // Trimmed by the validator, so Mongoose's own required check no
+            // longer answers for it with "Path `name` is required."
+            const blankName = await api("/projects", {
+                method: "POST",
+                token: adminToken,
+                body: { name: "   ", description: "d" },
+            });
+            assert.equal(blankName.status, 422, JSON.stringify(blankName.json));
+
+            /*
+             * A password is an exact secret. Registration used to trim it
+             * while login did not, so anyone whose password ended in a
+             * space -- pasted, or generated -- created an account that
+             * refused them with "Invalid credentials" and no clue why.
+             */
+            const padded = " Passw0rd! ";
+            const paddedEmail = `verify-pad-${STAMP}@test.local`;
+            const registered = await api("/auth/register", {
+                method: "POST",
+                body: {
+                    email: paddedEmail,
+                    username: `vpad${STAMP}`,
+                    password: padded,
+                },
+            });
+            assert.equal(
+                registered.status,
+                201,
+                JSON.stringify(registered.json),
+            );
+            createdUserIds.push(registered.json.data.user._id);
+
+            const exact = await api("/auth/login", {
+                method: "POST",
+                body: { email: paddedEmail, password: padded },
+            });
+            assert.equal(
+                exact.status,
+                200,
+                `the password as typed must sign in: ${JSON.stringify(exact.json)}`,
+            );
+
+            const trimmed = await api("/auth/login", {
+                method: "POST",
+                body: { email: paddedEmail, password: padded.trim() },
+            });
+            assert.equal(
+                trimmed.status,
+                401,
+                "a different string must not sign in",
+            );
+        });
+
         await t.test(
             "a task cannot be assigned to someone outside the project",
             async () => {

@@ -1,5 +1,27 @@
 import { body } from "express-validator";
 import { AvailableUserRole, AvailableTaskStatues } from "../utils/constants.js";
+
+/*
+ * Passwords are neither trimmed nor coerced.
+ *
+ * Trimming silently stores something other than what the user typed.
+ * Registration used to trim while login did not, so anyone whose password
+ * ended in a space -- a paste, or a generated one -- created an account they
+ * could not sign in to, and was told only "Invalid credentials".
+ *
+ * isString is for a different failure: express-validator stringifies before
+ * notEmpty(), so `{"$ne": null}` passed validation and reached bcrypt.compare,
+ * which throws on a non-string. That answered 500 on an unauthenticated route.
+ * bail() stops there, so an object is not also reported as empty.
+ */
+const passwordField = (field, label) =>
+    body(field)
+        .isString()
+        .withMessage(`${label} must be text`)
+        .bail()
+        .notEmpty()
+        .withMessage(`${label} is required`);
+
 const userRegisterValidator = () => {
     return [
         body("email")
@@ -16,7 +38,7 @@ const userRegisterValidator = () => {
             .withMessage("Username must be in lower case")
             .isLength({ min: 3 })
             .withMessage("Username must be at least 3 characters long"),
-        body("password").trim().notEmpty().withMessage("Password is required"),
+        passwordField("password", "Password"),
         body("fullName").optional().trim(),
     ];
 };
@@ -29,14 +51,14 @@ const userLoginValidator = () => {
             .withMessage("Email is required")
             .isEmail()
             .withMessage("Email is invalid"),
-        body("password").notEmpty().withMessage("Password is required"),
+        passwordField("password", "Password"),
     ];
 };
 
 const userChangeCurrentPasswordValidator = () => {
     return [
-        body("oldPassword").notEmpty().withMessage("Old password is required"),
-        body("newPassword").notEmpty().withMessage("New password is required"),
+        passwordField("oldPassword", "Old password"),
+        passwordField("newPassword", "New password"),
     ];
 };
 
@@ -62,13 +84,16 @@ const userForgotPasswordValidator = () => {
 };
 
 const userResetForgotPasswordValidator = () => {
-    return [body("newPassword").notEmpty().withMessage("Password is required")];
+    return [passwordField("newPassword", "Password")];
 };
 
 const createProjectValidator = () => {
     return [
-        body("name").notEmpty().withMessage("Name is required"),
-        body("description").optional(),
+        // Trimmed like every other name field. Without it a name of spaces
+        // reached Mongoose's own required check, and the client was handed
+        // "Project validation failed: name: Path `name` is required."
+        body("name").trim().notEmpty().withMessage("Name is required"),
+        body("description").optional().trim(),
     ];
 };
 
