@@ -1,5 +1,5 @@
 import { Route, Routes } from "react-router-dom";
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -15,6 +15,19 @@ import type { Role, User } from "../lib/types";
 
 // Mutable so each test can decide who is signed in before rendering.
 const session = vi.hoisted(() => ({ user: null as User | null }));
+
+/*
+ * jsdom implements no DataTransfer, so drag events carry a stub. The board
+ * reads the dragged id from React state rather than from here -- dataTransfer
+ * contents are unreadable during dragover in real browsers too -- but setData
+ * still has to exist, because the card calls it so Firefox will start the drag.
+ */
+const makeDataTransfer = (id = "") => ({
+    setData: vi.fn(),
+    getData: vi.fn(() => id),
+    effectAllowed: "",
+    dropEffect: "",
+});
 
 vi.mock("../context/auth", () => ({
     useAuth: () => ({
@@ -211,6 +224,69 @@ describe("ProjectDetail", () => {
                 screen.getByLabelText("Status for Migrate the blog"),
             ).toHaveValue("todo"),
         );
+    });
+
+    it("moves a card when it is dropped on another column", async () => {
+        stubQueries("admin");
+        put.mockResolvedValue(
+            makeTask({
+                _id: "t-todo",
+                title: "Migrate the blog",
+                status: "done",
+            }),
+        );
+        renderPage();
+
+        const card = (await screen.findByText("Migrate the blog")).closest(
+            '[draggable="true"]',
+        );
+        expect(card).not.toBeNull();
+
+        const done = screen.getByRole("region", { name: "Done" });
+        fireEvent.dragStart(card!, { dataTransfer: makeDataTransfer() });
+        fireEvent.dragOver(done, { dataTransfer: makeDataTransfer() });
+        fireEvent.drop(done, { dataTransfer: makeDataTransfer("t-todo") });
+
+        /*
+         * The same request the status dropdown sends. Dragging is an addition
+         * to that control, not a second way of doing it -- if these ever
+         * diverge, one of them is wrong.
+         */
+        await waitFor(() =>
+            expect(put).toHaveBeenCalledWith("/tasks/project-1/t/t-todo", {
+                status: "done",
+            }),
+        );
+    });
+
+    it("does not send a request for a drop back into the same column", async () => {
+        stubQueries("admin");
+        renderPage();
+
+        const card = (await screen.findByText("Migrate the blog")).closest(
+            '[draggable="true"]',
+        );
+        const todo = screen.getByRole("region", { name: "To do" });
+
+        fireEvent.dragStart(card!, { dataTransfer: makeDataTransfer() });
+        fireEvent.drop(todo, { dataTransfer: makeDataTransfer("t-todo") });
+
+        // Nothing changed, so there is nothing to tell the server about.
+        expect(put).not.toHaveBeenCalled();
+    });
+
+    it("offers no drag handle to a plain member", async () => {
+        stubQueries("member");
+        renderPage();
+
+        const card = (await screen.findByText("Migrate the blog")).closest(
+            '[draggable="true"]',
+        );
+        /*
+         * Only a manager can change a status, so a member who could drag a card
+         * would watch it snap back on a 403 -- worse than not offering it.
+         */
+        expect(card).toBeNull();
     });
 
     it("opens a task and lists its subtasks", async () => {

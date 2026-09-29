@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type {
     ButtonHTMLAttributes,
+    HTMLAttributes,
     InputHTMLAttributes,
     ReactNode,
     SelectHTMLAttributes,
@@ -168,15 +169,17 @@ export function Alert({
     );
 }
 
+// Forwards the rest of the div props, the same way Button does, so a caller
+// can make a card draggable or give it a handler without wrapping it in
+// another element purely to hang the attribute on.
 export function Card({
     className,
     children,
-}: {
-    className?: string;
-    children: ReactNode;
-}) {
+    ...rest
+}: HTMLAttributes<HTMLDivElement>) {
     return (
         <div
+            {...rest}
             className={cx(
                 "rounded-lg bg-white ring-1 ring-neutral-200",
                 "dark:bg-neutral-900 dark:ring-neutral-800",

@@ -16,6 +16,7 @@ import {
     Avatar,
     Button,
     Card,
+    cx,
     EmptyState,
     Field,
     Select,
@@ -197,42 +198,41 @@ function NewTaskForm({
     );
 }
 
-function TaskCard({
-    task,
-    projectId,
-    can,
-    onOpen,
-}: {
-    task: Task;
-    projectId: string;
-    can: Permissions;
-    onOpen: () => void;
-}) {
+/*
+ * Moving a card, by either route. Optimistic, unlike every other mutation
+ * here: this is the one interaction frequent enough that a round trip before
+ * the card moves reads as the app ignoring the gesture -- and with a drag it
+ * would mean the card springing back to where it started. Rolls back to the
+ * exact previous list on failure rather than refetching, so a dropped
+ * connection cannot leave the board showing a move the server never took.
+ *
+ * A hook rather than one mutation passed down, so each caller keeps its own
+ * isPending: the dropdown on a card disables only that card, and the board's
+ * instance answers for drops.
+ */
+function useMoveTask(projectId: string) {
     const queryClient = useQueryClient();
-    const assignee = asUser(task.assignedTo);
     const tasksKey = ["project", projectId, "tasks"];
 
-    /*
-     * Optimistic, unlike every other mutation here: moving a card is the one
-     * interaction frequent enough that a round trip before the card moves reads
-     * as the app ignoring the click. Rolls back to the exact previous list on
-     * failure rather than refetching, so a dropped connection cannot leave the
-     * board showing a move the server never accepted.
-     */
-    const statusMutation = useMutation({
-        mutationFn: (status: TaskStatus) =>
-            api.put<Task>(`/tasks/${projectId}/t/${task._id}`, { status }),
-        onMutate: async (status) => {
+    return useMutation({
+        mutationFn: ({
+            taskId,
+            status,
+        }: {
+            taskId: string;
+            status: TaskStatus;
+        }) => api.put<Task>(`/tasks/${projectId}/t/${taskId}`, { status }),
+        onMutate: async ({ taskId, status }) => {
             await queryClient.cancelQueries({ queryKey: tasksKey });
             const previous = queryClient.getQueryData<Task[]>(tasksKey);
             queryClient.setQueryData<Task[]>(tasksKey, (current) =>
                 current?.map((entry) =>
-                    entry._id === task._id ? { ...entry, status } : entry,
+                    entry._id === taskId ? { ...entry, status } : entry,
                 ),
             );
             return { previous };
         },
-        onError: (_error, _status, context) => {
+        onError: (_error, _variables, context) => {
             if (context?.previous) {
                 queryClient.setQueryData(tasksKey, context.previous);
             }
@@ -241,11 +241,52 @@ function TaskCard({
             void queryClient.invalidateQueries({ queryKey: tasksKey });
         },
     });
+}
+
+function TaskCard({
+    task,
+    projectId,
+    can,
+    onOpen,
+    onDragStart,
+    onDragEnd,
+    dragging,
+}: {
+    task: Task;
+    projectId: string;
+    can: Permissions;
+    onOpen: () => void;
+    onDragStart: () => void;
+    onDragEnd: () => void;
+    dragging: boolean;
+}) {
+    const assignee = asUser(task.assignedTo);
+    const statusMutation = useMoveTask(projectId);
 
     const attachmentCount = task.attachments?.length ?? 0;
 
     return (
-        <Card className="space-y-2 p-3">
+        <Card
+            /*
+             * Only a manager can drag, because only a manager can change a
+             * status -- letting a plain member drag a card that then snapped
+             * back on a 403 would be worse than not offering it.
+             */
+            draggable={can.manageTasks}
+            onDragStart={(event) => {
+                // Firefox refuses to start a drag without data on the transfer,
+                // even though the drop handler reads the id from React state.
+                event.dataTransfer.setData("text/plain", task._id);
+                event.dataTransfer.effectAllowed = "move";
+                onDragStart();
+            }}
+            onDragEnd={onDragEnd}
+            className={cx(
+                "space-y-2 p-3",
+                can.manageTasks && "cursor-grab active:cursor-grabbing",
+                dragging && "opacity-40",
+            )}
+        >
             <button
                 type="button"
                 onClick={onOpen}
@@ -286,7 +327,10 @@ function TaskCard({
                     value={task.status}
                     disabled={statusMutation.isPending}
                     onChange={(event) =>
-                        statusMutation.mutate(event.target.value as TaskStatus)
+                        statusMutation.mutate({
+                            taskId: task._id,
+                            status: event.target.value as TaskStatus,
+                        })
                     }
                     className="!py-1 text-xs"
                     options={TASK_STATUSES.map((value) => ({
@@ -343,6 +387,17 @@ export function TasksPanel({
     const [openTaskId, setOpenTaskId] = useState<string | null>(null);
     const [query, setQuery] = useState("");
     const [assignee, setAssignee] = useState<AssigneeFilter>("all");
+
+    /*
+     * The id of the card being dragged, and the column under the pointer. Both
+     * live here rather than on the card: a drop is handled by the column, and
+     * the column has to know which card it is receiving. dataTransfer would
+     * carry that, but its contents are unreadable during dragover in most
+     * browsers -- which is exactly when the highlight has to be decided.
+     */
+    const [dragging, setDragging] = useState<string | null>(null);
+    const [dragOver, setDragOver] = useState<TaskStatus | null>(null);
+    const moveTask = useMoveTask(projectId);
 
     if (isPending) {
         return (
@@ -486,8 +541,72 @@ export function TasksPanel({
                         const column = visible.filter(
                             (task) => task.status === status,
                         );
+                        const dragged = dragging
+                            ? all.find((task) => task._id === dragging)
+                            : undefined;
+                        // Nothing to drop here if the card already lives here.
+                        const receiving =
+                            dragOver === status &&
+                            dragged !== undefined &&
+                            dragged.status !== status;
+
                         return (
-                            <section key={status} className="space-y-2">
+                            <section
+                                key={status}
+                                /*
+                                 * A <section> is only a landmark once it has a
+                                 * name, so without this the board was three
+                                 * unlabelled boxes to a screen reader -- and
+                                 * there was no way to address a column at all.
+                                 */
+                                aria-label={TASK_STATUS_LABELS[status]}
+                                onDragOver={(event) => {
+                                    if (!can.manageTasks || !dragging) return;
+                                    // Without preventDefault the browser treats
+                                    // this as a non-drop target and no drop
+                                    // event is ever delivered.
+                                    event.preventDefault();
+                                    event.dataTransfer.dropEffect = "move";
+                                    setDragOver(status);
+                                }}
+                                onDragLeave={(event) => {
+                                    // Moving onto a child fires dragleave on the
+                                    // section; ignore anything still inside it.
+                                    if (
+                                        event.currentTarget.contains(
+                                            event.relatedTarget as Node | null,
+                                        )
+                                    ) {
+                                        return;
+                                    }
+                                    setDragOver((current) =>
+                                        current === status ? null : current,
+                                    );
+                                }}
+                                onDrop={(event) => {
+                                    event.preventDefault();
+                                    setDragOver(null);
+                                    const taskId =
+                                        dragging ||
+                                        event.dataTransfer.getData(
+                                            "text/plain",
+                                        );
+                                    setDragging(null);
+                                    if (!taskId || !can.manageTasks) return;
+                                    const task = all.find(
+                                        (entry) => entry._id === taskId,
+                                    );
+                                    // A drop back into the same column is a
+                                    // no-op, not a request the server needs.
+                                    if (!task || task.status === status) return;
+                                    moveTask.mutate({ taskId, status });
+                                }}
+                                className={cx(
+                                    "space-y-2 rounded-lg transition-colors",
+                                    receiving &&
+                                        "bg-indigo-50/70 ring-1 ring-indigo-200 dark:bg-indigo-950/30 dark:ring-indigo-900",
+                                )}
+                            >
                                 <h2 className="flex items-center gap-2 text-xs font-semibold tracking-wide text-neutral-500 uppercase dark:text-neutral-400">
                                     <span
                                         aria-hidden="true"
@@ -501,7 +620,9 @@ export function TasksPanel({
 
                                 {column.length === 0 ? (
                                     <p className="rounded-lg border border-dashed border-neutral-200 px-3 py-6 text-center text-xs text-neutral-400 dark:border-neutral-800">
-                                        Nothing here
+                                        {receiving
+                                            ? "Drop to move here"
+                                            : "Nothing here"}
                                     </p>
                                 ) : (
                                     column.map((task) => (
@@ -513,6 +634,14 @@ export function TasksPanel({
                                             onOpen={() =>
                                                 setOpenTaskId(task._id)
                                             }
+                                            dragging={dragging === task._id}
+                                            onDragStart={() =>
+                                                setDragging(task._id)
+                                            }
+                                            onDragEnd={() => {
+                                                setDragging(null);
+                                                setDragOver(null);
+                                            }}
                                         />
                                     ))
                                 )}

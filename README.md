@@ -43,6 +43,7 @@ A React single-page client lives in `frontend/` and consumes that API: sign-in, 
 - Account screen showing the signed-in profile and verification state, with a profile-photo picker that previews the chosen image before sending it, a display-name form, and a change-password form that explains up front that every session ends — including the current one — and signs the user out afterwards.
 - Project list linking into a per-project workspace with Tasks, Notes, Members, and (for admins) Settings tabs.
 - Task board grouped by status, with optimistic status changes that roll back to the previous board when the server refuses the move.
+- Cards can be dragged between columns, and the status dropdown on each card stays exactly as it was. Native drag-and-drop is mouse-only, so it is an addition to a control that works with a keyboard rather than a replacement for one; both send the same request. Only a manager can drag, since a member who could would watch the card snap back on a 403.
 - Board search and assignee filter, including "assigned to me" and "unassigned", applied in the browser because `GET /tasks/:projectId` returns the whole project in one response and takes no query parameters.
 - Task slide-over: description, assignee, attachments with sizes, and subtasks that any member may tick off.
 - Task create and edit send JSON when no files are selected and multipart when they are, so an empty assignee is omitted rather than failing the `isMongoId` validator.
@@ -436,8 +437,6 @@ plugin array against the wrong copy and fails `tsc --noEmit`.
   deployment should drop the body tokens.
 
 ## Future Improvements
-
-- Drag-and-drop on the task board. The status dropdown on each card is keyboard-accessible and works everywhere, so dragging would be an addition to it rather than a replacement.
 
 ## Learning Outcomes
 
