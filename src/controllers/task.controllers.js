@@ -6,6 +6,7 @@ import { ApiResponse } from "../utils/api-response.js";
 import { ApiError } from "../utils/api-error.js";
 import { asyncHandler } from "../utils/async-handler.js";
 import mongoose from "mongoose";
+import { lookupUser } from "../utils/aggregations.js";
 import { UserRolesEnum } from "../utils/constants.js";
 import { saveUpload, deleteAttachments } from "../utils/storage.js";
 
@@ -112,28 +113,7 @@ const getTaskById = asyncHandler(async (req, res) => {
                 project: new mongoose.Types.ObjectId(projectId),
             },
         },
-        {
-            $lookup: {
-                from: "users",
-                localField: "assignedTo",
-                foreignField: "_id",
-                as: "assignedTo",
-                pipeline: [
-                    {
-                        $project: {
-                            _id: 1,
-                            username: 1,
-                            fullName: 1,
-                            // The URL only. These pipelines do not pass through
-                            // the schema's toJSON, so projecting the whole
-                            // subdocument would hand out the storage provider
-                            // and key that every other route strips.
-                            "avatar.url": 1,
-                        },
-                    },
-                ],
-            },
-        },
+        lookupUser("assignedTo"),
         {
             $lookup: {
                 from: "subtasks",
@@ -141,24 +121,7 @@ const getTaskById = asyncHandler(async (req, res) => {
                 foreignField: "task",
                 as: "subtasks",
                 pipeline: [
-                    {
-                        $lookup: {
-                            from: "users",
-                            localField: "createdBy",
-                            foreignField: "_id",
-                            as: "createdBy",
-                            pipeline: [
-                                {
-                                    $project: {
-                                        _id: 1,
-                                        username: 1,
-                                        fullName: 1,
-                                        "avatar.url": 1,
-                                    },
-                                },
-                            ],
-                        },
-                    },
+                    lookupUser("createdBy"),
                     {
                         $addFields: {
                             createdBy: {

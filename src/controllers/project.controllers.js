@@ -8,6 +8,7 @@ import { ApiResponse } from "../utils/api-response.js";
 import { ApiError } from "../utils/api-error.js";
 import { asyncHandler } from "../utils/async-handler.js";
 import mongoose from "mongoose";
+import { lookupUser } from "../utils/aggregations.js";
 import { AvailableUserRole, UserRolesEnum } from "../utils/constants.js";
 import { deleteAttachments } from "../utils/storage.js";
 
@@ -216,28 +217,7 @@ const getProjectMembers = asyncHandler(async (req, res) => {
             },
         },
 
-        {
-            $lookup: {
-                from: "users",
-                localField: "user",
-                foreignField: "_id",
-                as: "user",
-                pipeline: [
-                    {
-                        $project: {
-                            _id: 1,
-                            username: 1,
-                            fullName: 1,
-                            // The URL only. An aggregation does not pass
-                            // through the schema's toJSON, so projecting the
-                            // whole subdocument would hand out the storage
-                            // provider and key that every other route strips.
-                            "avatar.url": 1,
-                        },
-                    },
-                ],
-            },
-        },
+        lookupUser("user"),
         {
             $addFields: {
                 user: {
