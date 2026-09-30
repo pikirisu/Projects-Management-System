@@ -100,23 +100,14 @@ const registerUser = asyncHandler(async (req, res) => {
         ),
     });
 
-    const createdUser = await User.findById(user._id).select(
-        "-password -refreshToken -emailVerificationToken -emailVerificationExpiry",
-    );
-
-    if (!createdUser) {
-        throw new ApiError(
-            500,
-            "Something went wrong while registering a user",
-        );
-    }
-
+    // No re-read: `user` is the document that was just written, and toJSON
+    // strips the secrets. The round trip existed only to apply a denylist.
     return res
         .status(201)
         .json(
             new ApiResponse(
-                200,
-                { user: createdUser },
+                201,
+                { user },
                 "User registered successfully and verification email has been sent on your email",
             ),
         );
@@ -125,7 +116,9 @@ const registerUser = asyncHandler(async (req, res) => {
 const login = asyncHandler(async (req, res) => {
     const { email, password } = req.body;
 
-    const user = await User.findOne({ email });
+    // +password: the hash is select:false, and comparing against it is the one
+    // thing this route exists to do.
+    const user = await User.findOne({ email }).select("+password");
 
     // A distinct "user does not exist" message lets an attacker enumerate which
     // addresses are registered, so both failure modes answer identically.
@@ -147,10 +140,6 @@ const login = asyncHandler(async (req, res) => {
         user._id,
     );
 
-    const loggedInUser = await User.findById(user._id).select(
-        "-password -refreshToken -emailVerificationToken -emailVerificationExpiry",
-    );
-
     return res
         .status(200)
         .cookie("accessToken", accessToken, accessCookieOptions())
@@ -158,11 +147,7 @@ const login = asyncHandler(async (req, res) => {
         .json(
             new ApiResponse(
                 200,
-                {
-                    user: loggedInUser,
-                    accessToken,
-                    refreshToken,
-                },
+                { user, accessToken, refreshToken },
                 "User logged in successfully",
             ),
         );
@@ -283,7 +268,10 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
             process.env.REFRESH_TOKEN_SECRET,
         );
 
-        const user = await User.findById(decodedToken?._id);
+        // +refreshToken: only rotation compares against the stored one.
+        const user = await User.findById(decodedToken?._id).select(
+            "+refreshToken",
+        );
         if (!user) {
             throw new ApiError(401, "Invalid refresh token");
         }
@@ -406,8 +394,6 @@ const updateProfile = asyncHandler(async (req, res) => {
         req.user._id,
         { $set: { fullName: fullName.trim() } },
         { new: true },
-    ).select(
-        "-password -refreshToken -emailVerificationToken -emailVerificationExpiry",
     );
 
     if (!user) {
@@ -457,7 +443,7 @@ const updateAvatar = asyncHandler(async (req, res) => {
 const changeCurrentPassword = asyncHandler(async (req, res) => {
     const { oldPassword, newPassword } = req.body;
 
-    const user = await User.findById(req.user?._id);
+    const user = await User.findById(req.user?._id).select("+password");
 
     const isPasswordValid = await user.isPasswordCorrect(oldPassword);
 

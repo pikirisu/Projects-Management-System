@@ -4,15 +4,22 @@ import jwt from "jsonwebtoken";
 import crypto from "crypto";
 
 /*
- * Fields that must never reach a response body: credentials, the tokens that
- * can be exchanged for them, and internal session bookkeeping.
+ * Two layers keep secrets out of a response, and they guard different things.
  *
- * Each query used to strip these by hand with .select("-password ..."), which
- * is a denylist maintained in one place per controller -- GET
- * /auth/current-user was returning forgotPasswordToken and
- * forgotPasswordExpiry because its list was written before those fields
- * existed and never revisited. Doing it on the schema instead means a field
- * added later is private by default rather than public by default.
+ * `select: false` on the fields below means a query does not load them at all
+ * unless it asks: `.select("+password")`. That is the layer that matters,
+ * because a field nobody loaded cannot be leaked by any code path, including
+ * ones written later. Only three places need one -- signing in, changing a
+ * password, and comparing a refresh token -- and each says so at the call site.
+ *
+ * The toJSON transform below is the backstop for anything that *is* loaded
+ * deliberately and then serialized by accident.
+ *
+ * Both replaced a `.select("-password -refreshToken ...")` denylist repeated
+ * at four call sites. A denylist has to be updated every time the schema
+ * grows, and this one was not: GET /auth/current-user returned
+ * forgotPasswordToken and forgotPasswordExpiry for as long as those fields
+ * existed, because its list predated them.
  */
 const PRIVATE_FIELDS = [
     "password",
@@ -87,6 +94,7 @@ const userSchema = new Schema(
         },
         password: {
             type: String,
+            select: false,
             required: [true, "Password is required"],
         },
         isEmailVerified: {
@@ -95,6 +103,7 @@ const userSchema = new Schema(
         },
         refreshToken: {
             type: String,
+            select: false,
         },
         /*
          * When this account's sessions were last invalidated. Access tokens
@@ -107,15 +116,19 @@ const userSchema = new Schema(
         },
         forgotPasswordToken: {
             type: String,
+            select: false,
         },
         forgotPasswordExpiry: {
             type: Date,
+            select: false,
         },
         emailVerificationToken: {
             type: String,
+            select: false,
         },
         emailVerificationExpiry: {
             type: Date,
+            select: false,
         },
     },
     {
