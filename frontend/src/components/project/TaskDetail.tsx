@@ -22,6 +22,8 @@ import {
 import type { Permissions } from "../../routes/ProjectDetail";
 import {
     Alert,
+    FileInput,
+    InlineInput,
     Avatar,
     Button,
     ConfirmButton,
@@ -75,13 +77,13 @@ function SubtaskRow({
                 checked={subtask.isCompleted}
                 disabled={toggle.isPending}
                 onChange={(event) => toggle.mutate(event.target.checked)}
-                className="size-4 rounded border-neutral-300 text-indigo-600 focus:ring-indigo-600 dark:border-neutral-600 dark:bg-neutral-800"
+                className="size-4 rounded border-hairline bg-surface text-indigo-600 focus:ring-indigo-600"
                 aria-label={subtask.title}
             />
             <span
                 className={
                     subtask.isCompleted
-                        ? "flex-1 text-sm text-neutral-400 line-through"
+                        ? "flex-1 text-sm text-faint line-through"
                         : "flex-1 text-sm"
                 }
             >
@@ -140,12 +142,11 @@ function AddSubtaskForm({
     return (
         <form onSubmit={handleSubmit} className="mt-2 flex items-start gap-2">
             <div className="flex-1">
-                <input
+                <InlineInput
                     value={title}
                     onChange={(event) => setTitle(event.target.value)}
                     placeholder="Add a subtask"
                     aria-label="Subtask title"
-                    className="block w-full rounded-md bg-white px-3 py-1.5 text-sm text-neutral-900 ring-1 ring-neutral-300 ring-inset placeholder:text-neutral-400 focus:ring-2 focus:ring-indigo-600 focus:outline-none dark:bg-neutral-900 dark:text-neutral-100 dark:ring-neutral-700"
                 />
                 {mutation.error instanceof ApiError && (
                     <p className="mt-1 text-xs text-red-600 dark:text-red-400">
@@ -198,7 +199,7 @@ function AttachmentRow({
     const size = formatBytes(file.size);
 
     return (
-        <li className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-neutral-50 dark:hover:bg-neutral-800">
+        <li className="flex items-center gap-2 rounded-lg px-2 py-1.5 transition-ui hover:bg-sunken">
             <a
                 href={file.url}
                 target="_blank"
@@ -208,9 +209,7 @@ function AttachmentRow({
                 {attachmentName(file.url)}
             </a>
             {size && (
-                <span className="shrink-0 text-xs text-neutral-400">
-                    {size}
-                </span>
+                <span className="shrink-0 text-xs text-faint">{size}</span>
             )}
             {/*
              * Only offered for rows the API can actually address. An
@@ -249,9 +248,7 @@ function Attachments({
 
     return (
         <section>
-            <h3 className="text-xs font-semibold tracking-wide text-neutral-500 uppercase dark:text-neutral-400">
-                Attachments
-            </h3>
+            <h3 className="text-label text-muted">Attachments</h3>
             <ul className="mt-2 space-y-1">
                 {files.map((file, index) => (
                     <AttachmentRow
@@ -380,25 +377,14 @@ function EditTaskForm({
                 />
             </div>
 
-            <div className="space-y-1.5">
-                <label
-                    htmlFor="more-attachments"
-                    className="block text-sm font-medium text-neutral-700 dark:text-neutral-300"
-                >
-                    Add attachments
-                </label>
-                <input
-                    id="more-attachments"
-                    type="file"
-                    multiple
-                    onChange={(event) =>
-                        setFiles(
-                            Array.from(event.target.files ?? []).slice(0, 5),
-                        )
-                    }
-                    className="block w-full text-sm text-neutral-600 file:mr-3 file:rounded-md file:border-0 file:bg-neutral-100 file:px-3 file:py-1.5 file:text-sm file:font-medium hover:file:bg-neutral-200 dark:text-neutral-400 dark:file:bg-neutral-800 dark:hover:file:bg-neutral-700"
-                />
-            </div>
+            <FileInput
+                label="Add attachments"
+                id="more-attachments"
+                multiple
+                onChange={(event) =>
+                    setFiles(Array.from(event.target.files ?? []).slice(0, 5))
+                }
+            />
 
             <div className="flex gap-2">
                 <Button
@@ -505,7 +491,7 @@ export function TaskDetail({
             ) : (
                 <div className="space-y-6">
                     <section className="space-y-2">
-                        <p className="text-sm whitespace-pre-wrap text-neutral-700 dark:text-neutral-300">
+                        <p className="text-sm whitespace-pre-wrap text-strong">
                             {task.description || "No description."}
                         </p>
                         <div className="flex items-center gap-2 text-xs text-muted">
@@ -524,7 +510,7 @@ export function TaskDetail({
                     <Attachments task={task} projectId={projectId} can={can} />
 
                     <section>
-                        <h3 className="flex items-center gap-2 text-xs font-semibold tracking-wide text-neutral-500 uppercase dark:text-neutral-400">
+                        <h3 className="text-label flex items-center gap-2 text-muted">
                             Subtasks
                             {task.subtasks.length > 0 && (
                                 <span className="font-normal normal-case">
@@ -538,7 +524,7 @@ export function TaskDetail({
                                 No subtasks yet.
                             </p>
                         ) : (
-                            <ul className="mt-1 divide-y divide-neutral-100 dark:divide-neutral-800">
+                            <ul className="mt-1 divide-y divide-hairline">
                                 {task.subtasks.map((subtask) => (
                                     <SubtaskRow
                                         key={subtask._id}
@@ -560,7 +546,7 @@ export function TaskDetail({
                     </section>
 
                     {can.manageTasks && (
-                        <div className="flex items-center gap-2 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+                        <div className="flex items-center gap-2 border-t border-hairline pt-4">
                             <Button
                                 size="sm"
                                 variant="secondary"

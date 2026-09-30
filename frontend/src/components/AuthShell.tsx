@@ -15,7 +15,7 @@ export function AuthShell({
     const wakeState = useApiWakeup();
 
     return (
-        <div className="flex min-h-full flex-col bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
+        <div className="flex min-h-full flex-col bg-canvas text-strong">
             <ApiStatusBanner state={wakeState} />
 
             <div className="flex flex-1 items-center justify-center px-4 py-12">
@@ -29,9 +29,7 @@ export function AuthShell({
                         </span>
                     </div>
 
-                    <h1 className="text-xl font-semibold tracking-tight">
-                        {title}
-                    </h1>
+                    <h1 className="text-display text-strong">{title}</h1>
                     <p className="mt-1 text-sm text-muted">{subtitle}</p>
 
                     <div className="mt-6">{children}</div>

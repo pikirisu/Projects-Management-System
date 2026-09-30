@@ -14,8 +14,8 @@ import { Spinner } from "./components/ui";
 
 function FullPageSpinner() {
     return (
-        <div className="grid min-h-full place-items-center bg-neutral-50 dark:bg-neutral-950">
-            <Spinner className="size-6 text-neutral-400" />
+        <div className="grid min-h-full place-items-center bg-canvas">
+            <Spinner className="size-6 text-faint" />
         </div>
     );
 }

@@ -169,7 +169,7 @@ function MemberRow({
                         <p className="truncate text-sm font-medium">
                             {displayName(entry.user)}
                             {isSelf && (
-                                <span className="ml-1.5 text-xs font-normal text-neutral-400">
+                                <span className="ml-1.5 text-xs font-normal text-faint">
                                     you
                                 </span>
                             )}

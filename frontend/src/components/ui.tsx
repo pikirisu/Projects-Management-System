@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type {
     ButtonHTMLAttributes,
+    RefObject,
     HTMLAttributes,
     InputHTMLAttributes,
     ReactNode,
@@ -146,6 +147,78 @@ export function Field({
     );
 }
 
+/**
+ * A compact unlabelled input, for a control that sits in a toolbar or at the
+ * foot of a list rather than in a form.
+ *
+ * Its 200-character className was copy-pasted between the board's search box
+ * and the task slide-over's add-subtask row. Two hand-rolled copies of the
+ * shared input is how a design system stops being one: the next change lands on
+ * whichever copy the author happened to open.
+ */
+export function InlineInput({
+    className,
+    ...rest
+}: InputHTMLAttributes<HTMLInputElement>) {
+    return (
+        <input
+            {...rest}
+            className={cx(
+                "block w-full rounded-lg px-3 py-1.5 text-sm transition-ui",
+                "bg-surface text-strong placeholder:text-faint",
+                "ring-1 ring-hairline ring-inset hover:ring-muted/40",
+                "focus:ring-2 focus:ring-indigo-600 focus:ring-inset focus:outline-none",
+                className,
+            )}
+        />
+    );
+}
+
+/**
+ * A labelled file picker. The same styling was written out three times -- the
+ * new-task form, the task editor and the avatar picker -- and had already
+ * drifted: two of the three styled the button text and the third did not.
+ */
+export function FileInput({
+    label,
+    hint,
+    id,
+    className,
+    inputRef,
+    ...rest
+}: InputHTMLAttributes<HTMLInputElement> & {
+    label: string;
+    hint?: string;
+    /** For clearing the picker: re-choosing the same file fires no change. */
+    inputRef?: RefObject<HTMLInputElement | null>;
+}) {
+    const inputId = id ?? rest.name ?? label.toLowerCase().replace(/\s+/g, "-");
+    return (
+        <div className="space-y-1.5">
+            <label
+                htmlFor={inputId}
+                className="block text-sm font-medium text-strong"
+            >
+                {label}
+            </label>
+            <input
+                {...rest}
+                ref={inputRef}
+                id={inputId}
+                type="file"
+                className={cx(
+                    "block w-full text-sm text-muted",
+                    "file:mr-3 file:cursor-pointer file:rounded-lg file:border-0",
+                    "file:bg-sunken file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-strong",
+                    "file:transition-ui hover:file:bg-hairline",
+                    className,
+                )}
+            />
+            {hint && <p className="text-xs text-muted">{hint}</p>}
+        </div>
+    );
+}
+
 export function Alert({
     tone = "error",
     children,
@@ -193,8 +266,7 @@ export function Card({
 }
 
 const BADGE_TONES = {
-    neutral:
-        "bg-neutral-100 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300",
+    neutral: "bg-sunken text-muted",
     accent: "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300",
 };
 
@@ -278,7 +350,7 @@ export function Textarea({
         <div className="space-y-1.5">
             <label
                 htmlFor={fieldId}
-                className="block text-sm font-medium text-neutral-700 dark:text-neutral-300"
+                className="block text-sm font-medium text-strong"
             >
                 {label}
             </label>
@@ -289,12 +361,11 @@ export function Textarea({
                 aria-describedby={describedBy}
                 className={cx(
                     "block w-full rounded-md px-3 py-2 text-sm",
-                    "bg-white text-neutral-900 placeholder:text-neutral-400",
+                    "bg-surface text-strong placeholder:text-faint",
                     "ring-1 ring-inset focus:ring-2 focus:ring-inset focus:outline-none",
-                    "dark:bg-neutral-900 dark:text-neutral-100 dark:placeholder:text-neutral-600",
                     error
                         ? "ring-red-500 focus:ring-red-500"
-                        : "ring-neutral-300 focus:ring-indigo-600 dark:ring-neutral-700",
+                        : "ring-hairline hover:ring-muted/40 focus:ring-indigo-600",
                     className,
                 )}
             />
@@ -432,7 +503,7 @@ export function Avatar({
                 title={title}
                 className={cx(
                     dimensions,
-                    "shrink-0 rounded-full object-cover ring-1 ring-neutral-200 dark:ring-neutral-700",
+                    "shrink-0 rounded-full object-cover ring-1 ring-hairline",
                 )}
             />
         );
@@ -445,7 +516,7 @@ export function Avatar({
             className={cx(
                 dimensions,
                 "grid shrink-0 place-items-center rounded-full font-semibold",
-                "bg-neutral-200 text-neutral-600 dark:bg-neutral-700 dark:text-neutral-200",
+                "bg-sunken text-muted ring-1 ring-hairline",
             )}
         >
             {initials}
@@ -567,7 +638,7 @@ export function SlideOver({
     return (
         <div className="fixed inset-0 z-50 flex justify-end">
             <div
-                className="absolute inset-0 bg-neutral-900/40"
+                className="absolute inset-0 bg-neutral-950/50 backdrop-blur-[2px]"
                 onClick={onClose}
                 aria-hidden="true"
             />
@@ -578,10 +649,10 @@ export function SlideOver({
                 tabIndex={-1}
                 className={cx(
                     "relative flex h-full w-full max-w-lg flex-col shadow-xl outline-none",
-                    "bg-white dark:bg-neutral-900",
+                    "bg-surface shadow-overlay",
                 )}
             >
-                <div className="flex items-start justify-between gap-4 border-b border-neutral-200 px-4 py-3 dark:border-neutral-800">
+                <div className="flex items-start justify-between gap-4 border-b border-hairline px-5 py-4">
                     <div className="min-w-0 flex-1">{title}</div>
                     <Button
                         variant="ghost"

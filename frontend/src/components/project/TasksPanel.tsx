@@ -19,6 +19,8 @@ import {
     cx,
     EmptyState,
     Field,
+    FileInput,
+    InlineInput,
     Select,
     Spinner,
     Textarea,
@@ -26,7 +28,7 @@ import {
 import { TaskDetail } from "./TaskDetail";
 
 const COLUMN_ACCENTS: Record<TaskStatus, string> = {
-    todo: "bg-neutral-400",
+    todo: "bg-faint",
     in_progress: "bg-amber-500",
     done: "bg-emerald-500",
 };
@@ -148,32 +150,22 @@ function NewTaskForm({
                     />
                 </div>
 
-                <div className="space-y-1.5">
-                    <label
-                        htmlFor="attachments"
-                        className="block text-sm font-medium text-neutral-700 dark:text-neutral-300"
-                    >
-                        Attachments
-                    </label>
-                    <input
-                        id="attachments"
-                        type="file"
-                        multiple
-                        onChange={(event) =>
-                            setFiles(
-                                Array.from(event.target.files ?? []).slice(
-                                    0,
-                                    MAX_ATTACHMENTS,
-                                ),
-                            )
-                        }
-                        className="block w-full text-sm text-neutral-600 file:mr-3 file:rounded-md file:border-0 file:bg-neutral-100 file:px-3 file:py-1.5 file:text-sm file:font-medium hover:file:bg-neutral-200 dark:text-neutral-400 dark:file:bg-neutral-800 dark:hover:file:bg-neutral-700"
-                    />
-                    <p className="text-xs text-muted">
-                        Up to {MAX_ATTACHMENTS} files.
-                        {files.length > 0 && ` ${files.length} selected.`}
-                    </p>
-                </div>
+                <FileInput
+                    label="Attachments"
+                    name="attachments"
+                    multiple
+                    onChange={(event) =>
+                        setFiles(
+                            Array.from(event.target.files ?? []).slice(
+                                0,
+                                MAX_ATTACHMENTS,
+                            ),
+                        )
+                    }
+                    hint={`Up to ${MAX_ATTACHMENTS} files.${
+                        files.length > 0 ? ` ${files.length} selected.` : ""
+                    }`}
+                />
 
                 <div className="flex gap-2">
                     <Button
@@ -315,7 +307,7 @@ function TaskCard({
                     </span>
                 </div>
                 {attachmentCount > 0 && (
-                    <span className="shrink-0 text-xs text-neutral-400">
+                    <span className="shrink-0 text-xs text-faint">
                         {attachmentCount} file
                         {attachmentCount === 1 ? "" : "s"}
                     </span>
@@ -440,7 +432,7 @@ export function TasksPanel({
                 {all.length > 0 && (
                     <div className="flex flex-wrap items-end gap-2">
                         <div className="w-48">
-                            <input
+                            <InlineInput
                                 type="search"
                                 value={query}
                                 onChange={(event) =>
@@ -448,7 +440,6 @@ export function TasksPanel({
                                 }
                                 placeholder="Search tasks"
                                 aria-label="Search tasks"
-                                className="block w-full rounded-md bg-white px-3 py-1.5 text-sm text-neutral-900 ring-1 ring-neutral-300 ring-inset placeholder:text-neutral-400 focus:ring-2 focus:ring-indigo-600 focus:outline-none dark:bg-neutral-900 dark:text-neutral-100 dark:ring-neutral-700"
                             />
                         </div>
                         <div className="w-44">
@@ -621,7 +612,7 @@ export function TasksPanel({
                                 </h2>
 
                                 {column.length === 0 ? (
-                                    <p className="rounded-lg border border-dashed border-neutral-200 px-3 py-6 text-center text-xs text-neutral-400 dark:border-neutral-800">
+                                    <p className="rounded-xl border border-dashed border-hairline px-3 py-8 text-center text-xs text-faint">
                                         {receiving
                                             ? "Drop to move here"
                                             : "Nothing here"}

@@ -4,7 +4,15 @@ import { api, ApiError } from "../lib/api";
 import { useAuth } from "../context/auth";
 import { displayName, formatDate, initials } from "../lib/display";
 import type { User } from "../lib/types";
-import { Alert, Avatar, Badge, Button, Card, Field } from "../components/ui";
+import {
+    Alert,
+    Avatar,
+    Badge,
+    Button,
+    Card,
+    Field,
+    FileInput,
+} from "../components/ui";
 
 /** Matches the server's allowlist, so the file picker offers only what it takes. */
 const AVATAR_ACCEPT = "image/jpeg,image/png,image/gif,image/webp";
@@ -96,27 +104,18 @@ function AvatarForm({ user }: { user: User }) {
                     title={displayName(user)}
                     size="lg"
                 />
-                <div className="min-w-0 space-y-1">
-                    <label
-                        htmlFor="avatar"
-                        className="block text-sm font-medium"
-                    >
-                        Profile photo
-                    </label>
-                    <input
-                        ref={inputRef}
+                <div className="min-w-0 flex-1">
+                    <FileInput
+                        label="Profile photo"
+                        inputRef={inputRef}
                         id="avatar"
                         name="avatar"
-                        type="file"
                         accept={AVATAR_ACCEPT}
                         onChange={(event) =>
                             choose(event.target.files?.[0] ?? null)
                         }
-                        className="block w-full text-sm text-neutral-600 file:mr-3 file:rounded-md file:border-0 file:bg-neutral-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-neutral-900 hover:file:bg-neutral-200 dark:text-neutral-400 dark:file:bg-neutral-800 dark:file:text-neutral-100 dark:hover:file:bg-neutral-700"
+                        hint="JPEG, PNG, GIF or WebP, up to 500 KB."
                     />
-                    <p className="text-xs text-muted">
-                        JPEG, PNG, GIF or WebP, up to 500 KB.
-                    </p>
                 </div>
             </div>
 
@@ -302,9 +301,7 @@ export function Account() {
     return (
         <div className="space-y-6">
             <div>
-                <h1 className="text-lg font-semibold tracking-tight">
-                    Account
-                </h1>
+                <h1 className="text-display text-strong">Account</h1>
                 <p className="text-sm text-muted">
                     Your profile and sign-in details.
                 </p>
@@ -328,7 +325,7 @@ export function Account() {
                     </div>
                 </div>
 
-                <dl className="mt-4 grid gap-3 border-t border-neutral-200 pt-4 text-sm sm:grid-cols-2 dark:border-neutral-800">
+                <dl className="mt-4 grid gap-3 border-t border-hairline pt-4 text-sm sm:grid-cols-2">
                     <div>
                         <dt className="text-xs text-muted">Email</dt>
                         <dd className="mt-0.5 truncate">{user.email}</dd>
@@ -341,9 +338,7 @@ export function Account() {
                             ) : user.isEmailVerified ? (
                                 <Badge tone="accent">Verified</Badge>
                             ) : (
-                                <span className="text-neutral-400">
-                                    Unknown
-                                </span>
+                                <span className="text-faint">Unknown</span>
                             )}
                         </dd>
                     </div>
@@ -354,7 +349,7 @@ export function Account() {
                 <p className="mb-4 text-sm font-medium">Profile</p>
                 <div className="space-y-6">
                     <AvatarForm user={user} />
-                    <div className="border-t border-neutral-200 pt-6 dark:border-neutral-800">
+                    <div className="border-t border-hairline pt-6">
                         <ProfileForm user={user} />
                     </div>
                 </div>

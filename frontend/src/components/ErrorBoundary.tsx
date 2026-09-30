@@ -39,9 +39,9 @@ export class ErrorBoundary extends Component<Props, State> {
         if (!error) return this.props.children;
 
         return (
-            <div className="grid min-h-full place-items-center bg-neutral-50 px-4 py-12 dark:bg-neutral-950">
-                <Card className="w-full max-w-md p-6 text-neutral-900 dark:text-neutral-100">
-                    <h1 className="text-base font-semibold tracking-tight">
+            <div className="grid min-h-full place-items-center bg-canvas px-4 py-12">
+                <Card className="w-full max-w-md p-6 text-strong">
+                    <h1 className="text-title text-strong">
                         Something went wrong
                     </h1>
                     <p className="mt-2 text-sm text-muted">
