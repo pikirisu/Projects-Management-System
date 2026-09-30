@@ -86,7 +86,7 @@ export function ProjectSettings({ project }: { project: Project }) {
                 <p className="text-sm font-medium text-red-700 dark:text-red-400">
                     Danger zone
                 </p>
-                <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+                <p className="mt-1 text-sm text-muted">
                     Deleting this project also removes its tasks, subtasks,
                     notes, members and uploaded files. This cannot be undone.
                 </p>

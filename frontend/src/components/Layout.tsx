@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { Link, Outlet, useLocation } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../context/auth";
 import { pingApi } from "../lib/api";
-import { Button } from "./ui";
+import { displayName, initials } from "../lib/display";
+import { Avatar, Button, cx } from "./ui";
 import { VerifyEmailBanner } from "./VerifyEmailBanner";
 
 /*
@@ -38,19 +39,25 @@ export function useApiWakeup(): WakeState {
     return state;
 }
 
+/*
+ * This one stays a full-bleed bar above the chrome, unlike the email-verify
+ * notice below it. The distinction is deliberate: this reports that the app
+ * cannot talk to its server at all, which outranks whatever screen you are on.
+ */
 export function ApiStatusBanner({ state }: { state: WakeState }) {
     if (state === "checking" || state === "awake") return null;
 
     return (
         <div
             role="status"
-            className={
+            className={cx(
+                "border-b text-center",
                 state === "slow"
-                    ? "bg-amber-50 text-amber-900 dark:bg-amber-950/50 dark:text-amber-200"
-                    : "bg-red-50 text-red-900 dark:bg-red-950/50 dark:text-red-200"
-            }
+                    ? "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200"
+                    : "border-red-200 bg-red-50 text-red-900 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200",
+            )}
         >
-            <p className="mx-auto max-w-5xl px-4 py-2 text-xs sm:px-6">
+            <p className="mx-auto max-w-6xl px-4 py-2 text-xs sm:px-6">
                 {state === "slow"
                     ? "Waking the API server — it sleeps after inactivity on the free tier, so the first request can take up to a minute."
                     : "Cannot reach the API server. It may still be starting up; refresh in a moment."}
@@ -59,6 +66,8 @@ export function ApiStatusBanner({ state }: { state: WakeState }) {
     );
 }
 
+const NAV = [{ to: "/projects", label: "Projects" }];
+
 function UserMenu() {
     const { user, logout } = useAuth();
     const [busy, setBusy] = useState(false);
@@ -66,20 +75,30 @@ function UserMenu() {
     if (!user) return null;
 
     return (
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
+            {/*
+             * The avatar is the link. The name and address used to sit in the
+             * header as two lines of small type, which read as a paragraph
+             * wedged into a toolbar; the name stays on wide screens as a label
+             * for the avatar, and the address moves to the account screen that
+             * owns it.
+             */}
             <Link
                 to="/account"
-                className="hidden rounded px-1 text-right focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 sm:block"
+                className="group flex items-center gap-2 rounded-lg px-1.5 py-1 transition-ui hover:bg-sunken focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
+                title="Account settings"
             >
-                <p className="text-xs font-medium text-neutral-900 hover:text-indigo-600 dark:text-neutral-100 dark:hover:text-indigo-400">
-                    {user.fullName || user.username}
-                </p>
-                <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
-                    {user.email}
-                </p>
+                <Avatar
+                    src={user.avatar?.url}
+                    initials={initials(user)}
+                    title={displayName(user)}
+                />
+                <span className="hidden text-sm font-medium text-strong sm:block">
+                    {displayName(user)}
+                </span>
             </Link>
             <Button
-                variant="secondary"
+                variant="ghost"
                 size="sm"
                 loading={busy}
                 onClick={() => {
@@ -98,31 +117,66 @@ export function Layout() {
     const location = useLocation();
 
     return (
-        <div className="flex min-h-full flex-col bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
+        <div className="flex min-h-full flex-col bg-canvas text-strong">
             <ApiStatusBanner state={wakeState} />
-            <VerifyEmailBanner />
 
-            <header className="border-b border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
-                <div className="mx-auto flex h-14 max-w-5xl items-center justify-between gap-4 px-4 sm:px-6">
+            {/*
+             * Sticky, so the way back out of a long task board is always one
+             * click away rather than one scroll-to-top away. The blur keeps it
+             * legible over content without needing an opaque bar that looks
+             * detached from the page.
+             */}
+            <header className="sticky top-0 z-30 border-b border-hairline bg-surface/85 backdrop-blur-md">
+                <div className="mx-auto flex h-14 max-w-6xl items-center gap-6 px-4 sm:px-6">
                     <Link
                         to="/projects"
-                        className="flex items-center gap-2 text-sm font-semibold tracking-tight"
+                        className="flex shrink-0 items-center gap-2 rounded-lg text-sm font-semibold tracking-tight focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-indigo-600"
                     >
-                        <span className="grid size-6 place-items-center rounded bg-indigo-600 text-[11px] font-bold text-white">
+                        <span className="grid size-6 place-items-center rounded-md bg-indigo-600 text-[11px] font-bold text-white shadow-raised">
                             PC
                         </span>
                         Project Camp
                     </Link>
-                    <UserMenu />
+
+                    <nav className="flex items-center gap-1">
+                        {NAV.map((item) => (
+                            <NavLink
+                                key={item.to}
+                                to={item.to}
+                                className={({ isActive }) =>
+                                    cx(
+                                        "rounded-lg px-2.5 py-1.5 text-sm font-medium transition-ui",
+                                        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600",
+                                        isActive
+                                            ? "bg-sunken text-strong"
+                                            : "text-muted hover:bg-sunken hover:text-strong",
+                                    )
+                                }
+                            >
+                                {item.label}
+                            </NavLink>
+                        ))}
+                    </nav>
+
+                    <div className="ml-auto">
+                        <UserMenu />
+                    </div>
                 </div>
             </header>
 
-            <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8 sm:px-6">
+            <main className="mx-auto w-full max-w-6xl flex-1 space-y-6 px-4 py-8 sm:px-6 lg:py-10">
+                {/*
+                 * Inside the content rather than above the header. As a
+                 * full-bleed bar it was the loudest element on every screen,
+                 * outranking the app's own chrome for a notice about one
+                 * account setting.
+                 */}
+                <VerifyEmailBanner />
                 <Outlet key={location.pathname} />
             </main>
 
-            <footer className="border-t border-neutral-200 py-4 dark:border-neutral-800">
-                <p className="mx-auto max-w-5xl px-4 text-xs text-neutral-500 sm:px-6 dark:text-neutral-400">
+            <footer className="border-t border-hairline">
+                <p className="mx-auto max-w-6xl px-4 py-5 text-xs text-faint sm:px-6">
                     Project management with per-project role-based access
                     control.
                 </p>

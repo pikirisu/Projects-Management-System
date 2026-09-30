@@ -475,7 +475,7 @@ export function TaskDetail({
                         {task?.title ?? "Task"}
                     </p>
                     {task && (
-                        <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                        <p className="text-xs text-muted">
                             {TASK_STATUS_LABELS[task.status]}
                             {task.createdAt &&
                                 ` · created ${formatDate(task.createdAt)}`}
@@ -485,7 +485,7 @@ export function TaskDetail({
             }
         >
             {isPending ? (
-                <div className="flex items-center gap-2 text-sm text-neutral-500 dark:text-neutral-400">
+                <div className="flex items-center gap-2 text-sm text-muted">
                     <Spinner />
                     Loading task…
                 </div>
@@ -508,7 +508,7 @@ export function TaskDetail({
                         <p className="text-sm whitespace-pre-wrap text-neutral-700 dark:text-neutral-300">
                             {task.description || "No description."}
                         </p>
-                        <div className="flex items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400">
+                        <div className="flex items-center gap-2 text-xs text-muted">
                             <Avatar
                                 size="sm"
                                 src={assignee?.avatar?.url}
@@ -534,7 +534,7 @@ export function TaskDetail({
                         </h3>
 
                         {task.subtasks.length === 0 ? (
-                            <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-400">
+                            <p className="mt-2 text-sm text-muted">
                                 No subtasks yet.
                             </p>
                         ) : (

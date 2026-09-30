@@ -1,13 +1,81 @@
+/*
+ * Inter, loaded before Tailwind because CSS requires every @import to precede
+ * other rules. The system stack is the fallback, so an offline load degrades to
+ * what the app looked like before rather than to nothing.
+ */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
 @import "tailwindcss";
 
 /*
- * Tailwind v4's `dark:` variant follows prefers-color-scheme by default, so the
- * palette is expressed entirely in `dark:` utilities on components. Declaring
- * color-scheme here is what makes the browser's own chrome -- form controls,
- * scrollbars, the canvas behind the page -- follow along.
+ * Semantic colours, not raw scale steps.
+ *
+ * `text-neutral-500 dark:text-neutral-400` appeared 36 times across the app --
+ * a role with no name, spelled out longhand every time, which is how the 37th
+ * use ends up one step off and nobody notices. Each pair below is declared once
+ * here and referenced as `text-muted`, `bg-surface`, `border-hairline`.
+ *
+ * `@theme inline` is what makes the light/dark pairing possible: it emits
+ * `var(--surface)` into the utility rather than resolving it at build time, so
+ * the media query below can move it.
  */
+@theme inline {
+    --font-sans:
+        "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+
+    --color-canvas: var(--canvas);
+    --color-surface: var(--surface);
+    --color-sunken: var(--sunken);
+    --color-hairline: var(--hairline);
+    --color-strong: var(--strong);
+    --color-muted: var(--muted);
+    --color-faint: var(--faint);
+
+    --shadow-raised: var(--elev-raised);
+    --shadow-overlay: var(--elev-overlay);
+}
+
 :root {
     color-scheme: light dark;
+
+    --canvas: oklch(98.2% 0.002 265);
+    --surface: oklch(100% 0 0);
+    --sunken: oklch(96.5% 0.003 265);
+    --hairline: oklch(91% 0.005 265);
+    --strong: oklch(21% 0.012 265);
+    --muted: oklch(52% 0.014 265);
+    --faint: oklch(66% 0.012 265);
+
+    /*
+     * Elevation is deliberately shallow. Two steps, both soft: a card that
+     * casts a hard shadow reads as a 2012 dashboard, and one that casts none
+     * reads as a wireframe.
+     */
+    --elev-raised:
+        0 1px 2px oklch(20% 0.02 265 / 0.04),
+        0 1px 3px oklch(20% 0.02 265 / 0.06);
+    --elev-overlay:
+        0 8px 24px oklch(20% 0.02 265 / 0.1),
+        0 2px 6px oklch(20% 0.02 265 / 0.06);
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --canvas: oklch(16% 0.006 265);
+        --surface: oklch(20.5% 0.007 265);
+        --sunken: oklch(18% 0.006 265);
+        --hairline: oklch(28% 0.008 265);
+        --strong: oklch(97% 0.003 265);
+        --muted: oklch(72% 0.013 265);
+        --faint: oklch(58% 0.012 265);
+
+        /*
+         * A shadow barely reads on a dark surface, so depth there comes from
+         * the surface being lighter than the canvas. These stay only to keep
+         * overlays separated from what is behind them.
+         */
+        --elev-raised: 0 1px 2px oklch(0% 0 0 / 0.3);
+        --elev-overlay: 0 12px 32px oklch(0% 0 0 / 0.5);
+    }
 }
 
 html,
@@ -18,5 +86,81 @@ body,
 
 body {
     margin: 0;
+    background: var(--canvas);
+    color: var(--strong);
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    /* Inter's defaults leave headings looking loose at display sizes. */
+    font-feature-settings: "cv11", "ss01";
+    font-variation-settings: normal;
+}
+
+/*
+ * The type scale the app did not have. 103 of its 113 text sizes were xs or sm,
+ * which is why every screen read as one undifferentiated block: nothing was
+ * larger than anything else, so nothing looked more important than anything
+ * else. Headings get tighter tracking as they grow, which is what stops a large
+ * weight from looking inflated rather than deliberate.
+ */
+@utility text-display {
+    font-size: 1.5rem;
+    line-height: 1.875rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+}
+
+@utility text-title {
+    font-size: 1.125rem;
+    line-height: 1.5rem;
+    font-weight: 600;
+    letter-spacing: -0.014em;
+}
+
+@utility text-heading {
+    font-size: 0.9375rem;
+    line-height: 1.375rem;
+    font-weight: 600;
+    letter-spacing: -0.006em;
+}
+
+@utility text-label {
+    font-size: 0.6875rem;
+    line-height: 1rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+/*
+ * The tab strip scrolls horizontally on a narrow screen, but a visible
+ * scrollbar track under a row of tabs reads as a rendering artifact -- which is
+ * exactly how it looked on Windows, where the track is always drawn.
+ */
+@utility scrollbar-none {
+    scrollbar-width: none;
+    &::-webkit-scrollbar {
+        display: none;
+    }
+}
+
+/*
+ * One motion vocabulary. Durations are short on purpose: an interface that
+ * animates for 300ms feels slower than one that does not animate at all.
+ */
+@utility transition-ui {
+    transition-property:
+        color, background-color, border-color, outline-color, box-shadow,
+        opacity, transform;
+    transition-timing-function: cubic-bezier(0.2, 0, 0.13, 1);
+    transition-duration: 130ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
 }

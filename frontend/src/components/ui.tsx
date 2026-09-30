@@ -17,11 +17,11 @@ type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
 
 const BUTTON_VARIANTS: Record<ButtonVariant, string> = {
     primary:
-        "bg-indigo-600 text-white hover:bg-indigo-500 focus-visible:outline-indigo-600 disabled:bg-indigo-600/50",
+        "bg-indigo-600 text-white shadow-raised hover:bg-indigo-500 focus-visible:outline-indigo-600 disabled:bg-indigo-600/50",
     secondary:
-        "bg-white text-neutral-800 ring-1 ring-inset ring-neutral-300 hover:bg-neutral-50 focus-visible:outline-neutral-400 dark:bg-neutral-900 dark:text-neutral-100 dark:ring-neutral-700 dark:hover:bg-neutral-800",
-    ghost: "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 focus-visible:outline-neutral-400 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100",
-    danger: "bg-red-600 text-white hover:bg-red-500 focus-visible:outline-red-600 disabled:bg-red-600/50",
+        "bg-surface text-strong ring-1 ring-inset ring-hairline shadow-raised hover:bg-sunken focus-visible:outline-indigo-600",
+    ghost: "text-muted hover:bg-sunken hover:text-strong focus-visible:outline-indigo-600",
+    danger: "bg-red-600 text-white shadow-raised hover:bg-red-500 focus-visible:outline-red-600 disabled:bg-red-600/50",
 };
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -44,9 +44,12 @@ export function Button({
             {...rest}
             disabled={disabled || loading}
             className={cx(
-                "inline-flex items-center justify-center gap-2 rounded-md font-medium transition-colors",
+                "inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-ui",
                 "focus-visible:outline-2 focus-visible:outline-offset-2",
-                "disabled:cursor-not-allowed disabled:opacity-70",
+                // A 1px drop on press. Small enough to read as the control
+                // responding rather than as the layout moving.
+                "active:translate-y-px",
+                "disabled:cursor-not-allowed disabled:opacity-60 disabled:shadow-none disabled:active:translate-y-0",
                 size === "sm" ? "px-2.5 py-1.5 text-xs" : "px-3.5 py-2 text-sm",
                 BUTTON_VARIANTS[variant],
                 className,
@@ -108,7 +111,7 @@ export function Field({
         <div className="space-y-1.5">
             <label
                 htmlFor={inputId}
-                className="block text-sm font-medium text-neutral-700 dark:text-neutral-300"
+                className="block text-sm font-medium text-strong"
             >
                 {label}
             </label>
@@ -118,13 +121,12 @@ export function Field({
                 aria-invalid={error ? true : undefined}
                 aria-describedby={describedBy}
                 className={cx(
-                    "block w-full rounded-md px-3 py-2 text-sm",
-                    "bg-white text-neutral-900 placeholder:text-neutral-400",
+                    "block w-full rounded-lg px-3 py-2 text-sm transition-ui",
+                    "bg-surface text-strong placeholder:text-faint",
                     "ring-1 ring-inset focus:ring-2 focus:ring-inset focus:outline-none",
-                    "dark:bg-neutral-900 dark:text-neutral-100 dark:placeholder:text-neutral-600",
                     error
                         ? "ring-red-500 focus:ring-red-500"
-                        : "ring-neutral-300 focus:ring-indigo-600 dark:ring-neutral-700",
+                        : "ring-hairline hover:ring-muted/40 focus:ring-indigo-600",
                     className,
                 )}
             />
@@ -136,10 +138,7 @@ export function Field({
                     {error}
                 </p>
             ) : hint ? (
-                <p
-                    id={`${inputId}-hint`}
-                    className="text-xs text-neutral-500 dark:text-neutral-400"
-                >
+                <p id={`${inputId}-hint`} className="text-xs text-muted">
                     {hint}
                 </p>
             ) : null}
@@ -158,7 +157,7 @@ export function Alert({
         <div
             role={tone === "error" ? "alert" : "status"}
             className={cx(
-                "rounded-md px-3 py-2 text-sm ring-1 ring-inset",
+                "rounded-lg px-3 py-2.5 text-sm ring-1 ring-inset",
                 tone === "error"
                     ? "bg-red-50 text-red-800 ring-red-200 dark:bg-red-950/40 dark:text-red-300 dark:ring-red-900"
                     : "bg-blue-50 text-blue-800 ring-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:ring-blue-900",
@@ -181,8 +180,10 @@ export function Card({
         <div
             {...rest}
             className={cx(
-                "rounded-lg bg-white ring-1 ring-neutral-200",
-                "dark:bg-neutral-900 dark:ring-neutral-800",
+                // border rather than ring: a ring sits outside the box and
+                // doubles up wherever cards stack, which showed as a heavier
+                // line between adjacent rows.
+                "rounded-xl border border-hairline bg-surface shadow-raised",
                 className,
             )}
         >
@@ -207,12 +208,28 @@ export function Badge({
     return (
         <span
             className={cx(
-                "inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium",
+                "inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-medium",
                 BADGE_TONES[tone],
             )}
         >
             {children}
         </span>
+    );
+}
+
+/**
+ * A loading placeholder shaped like the thing that is coming.
+ *
+ * A centred spinner says "something is happening"; a skeleton says "a list of
+ * cards is happening, here is where they will be", so the layout does not jump
+ * when the data lands.
+ */
+export function Skeleton({ className }: { className?: string }) {
+    return (
+        <div
+            aria-hidden="true"
+            className={cx("animate-pulse rounded-md bg-sunken", className)}
+        />
     );
 }
 
@@ -226,11 +243,9 @@ export function EmptyState({
     action?: ReactNode;
 }) {
     return (
-        <div className="rounded-lg border border-dashed border-neutral-300 px-6 py-12 text-center dark:border-neutral-700">
-            <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                {title}
-            </p>
-            <p className="mx-auto mt-1 max-w-sm text-sm text-neutral-500 dark:text-neutral-400">
+        <div className="rounded-xl border border-dashed border-hairline bg-surface/40 px-6 py-14 text-center">
+            <p className="text-heading text-strong">{title}</p>
+            <p className="mx-auto mt-1 max-w-sm text-sm text-muted">
                 {description}
             </p>
             {action && <div className="mt-4">{action}</div>}
@@ -291,10 +306,7 @@ export function Textarea({
                     {error}
                 </p>
             ) : hint ? (
-                <p
-                    id={`${fieldId}-hint`}
-                    className="text-xs text-neutral-500 dark:text-neutral-400"
-                >
+                <p id={`${fieldId}-hint`} className="text-xs text-muted">
                     {hint}
                 </p>
             ) : null}
@@ -303,6 +315,8 @@ export function Textarea({
 }
 
 interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
+    /** Borderless, for a control inside a card rather than inside a form. */
+    quiet?: boolean;
     label?: string;
     error?: string;
     options: Array<{ value: string; label: string }>;
@@ -314,6 +328,7 @@ export function Select({
     options,
     id,
     className,
+    quiet = false,
     ...rest
 }: SelectProps) {
     const fieldId =
@@ -327,7 +342,7 @@ export function Select({
             {label && (
                 <label
                     htmlFor={fieldId}
-                    className="block text-sm font-medium text-neutral-700 dark:text-neutral-300"
+                    className="block text-sm font-medium text-strong"
                 >
                     {label}
                 </label>
@@ -337,15 +352,35 @@ export function Select({
                 id={fieldId}
                 aria-invalid={error ? true : undefined}
                 className={cx(
-                    "block w-full rounded-md py-2 pr-8 pl-3 text-sm",
-                    "bg-white text-neutral-900",
-                    "ring-1 ring-inset focus:ring-2 focus:ring-inset focus:outline-none",
-                    "dark:bg-neutral-900 dark:text-neutral-100",
-                    error
-                        ? "ring-red-500 focus:ring-red-500"
-                        : "ring-neutral-300 focus:ring-indigo-600 dark:ring-neutral-700",
+                    "block w-full appearance-none rounded-lg text-sm transition-ui",
+                    "text-strong focus:ring-2 focus:ring-inset focus:outline-none",
+                    /*
+                     * `quiet` is for a control that lives inside a card rather
+                     * than inside a form. A full bordered field repeated on
+                     * every card reads as a row of form inputs; this shows its
+                     * affordance on hover and focus and stays out of the way in
+                     * between.
+                     */
+                    quiet
+                        ? "bg-transparent py-1 pr-7 pl-2 font-medium text-muted hover:bg-sunken hover:text-strong focus:ring-indigo-600"
+                        : cx(
+                              "bg-surface py-2 pr-8 pl-3 ring-1 ring-inset focus:ring-inset",
+                              error
+                                  ? "ring-red-500 focus:ring-red-500"
+                                  : "ring-hairline hover:ring-muted/40 focus:ring-indigo-600",
+                          ),
                     className,
                 )}
+                style={{
+                    // A native select drops its arrow with appearance-none, so
+                    // it is drawn back as a background image that follows
+                    // currentColor in both themes.
+                    backgroundImage:
+                        "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23888' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'><path d='M4 6l4 4 4-4'/></svg>\")",
+                    backgroundRepeat: "no-repeat",
+                    backgroundPosition: `right ${quiet ? "0.375rem" : "0.625rem"} center`,
+                    backgroundSize: "1rem",
+                }}
             >
                 {options.map((option) => (
                     <option key={option.value} value={option.value}>
@@ -578,7 +613,7 @@ export function Tabs<T extends string>({
     return (
         <div
             role="tablist"
-            className="flex gap-1 border-b border-neutral-200 dark:border-neutral-800"
+            className="scrollbar-none flex gap-1 overflow-x-auto border-b border-hairline"
         >
             {tabs.map((tab) => {
                 const active = tab.value === value;
@@ -590,16 +625,26 @@ export function Tabs<T extends string>({
                         aria-selected={active}
                         onClick={() => onChange(tab.value)}
                         className={cx(
-                            "-mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors",
+                            "-mb-px inline-flex shrink-0 items-center gap-2 border-b-2 px-3 py-2.5 text-sm font-medium transition-ui",
                             "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600",
                             active
-                                ? "border-indigo-600 text-indigo-700 dark:text-indigo-400"
-                                : "border-transparent text-neutral-500 hover:border-neutral-300 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-100",
+                                ? "border-indigo-600 text-indigo-600 dark:text-indigo-400"
+                                : "border-transparent text-muted hover:border-hairline hover:text-strong",
                         )}
                     >
                         {tab.label}
                         {tab.count !== undefined && (
-                            <span className="ml-1.5 text-xs text-neutral-400">
+                            /* A pill, not a loose number: at a glance the count
+                             * belongs to its tab rather than floating between
+                             * this label and the next one. */
+                            <span
+                                className={cx(
+                                    "rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular-nums transition-ui",
+                                    active
+                                        ? "bg-indigo-600/10 text-indigo-600 dark:bg-indigo-400/15 dark:text-indigo-300"
+                                        : "bg-sunken text-faint",
+                                )}
+                            >
                                 {tab.count}
                             </span>
                         )}

@@ -169,7 +169,7 @@ function NewTaskForm({
                         }
                         className="block w-full text-sm text-neutral-600 file:mr-3 file:rounded-md file:border-0 file:bg-neutral-100 file:px-3 file:py-1.5 file:text-sm file:font-medium hover:file:bg-neutral-200 dark:text-neutral-400 dark:file:bg-neutral-800 dark:hover:file:bg-neutral-700"
                     />
-                    <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                    <p className="text-xs text-muted">
                         Up to {MAX_ATTACHMENTS} files.
                         {files.length > 0 && ` ${files.length} selected.`}
                     </p>
@@ -282,9 +282,10 @@ function TaskCard({
             }}
             onDragEnd={onDragEnd}
             className={cx(
-                "space-y-2 p-3",
+                "space-y-2 p-3.5 transition-ui",
+                "hover:border-indigo-300 hover:shadow-overlay dark:hover:border-indigo-800",
                 can.manageTasks && "cursor-grab active:cursor-grabbing",
-                dragging && "opacity-40",
+                dragging && "opacity-40 shadow-none",
             )}
         >
             <button
@@ -296,7 +297,7 @@ function TaskCard({
             </button>
 
             {task.description && (
-                <p className="line-clamp-2 text-xs text-neutral-500 dark:text-neutral-400">
+                <p className="line-clamp-2 text-xs text-muted">
                     {task.description}
                 </p>
             )}
@@ -309,7 +310,7 @@ function TaskCard({
                         initials={initials(assignee)}
                         title={displayName(assignee)}
                     />
-                    <span className="truncate text-xs text-neutral-500 dark:text-neutral-400">
+                    <span className="truncate text-xs text-muted">
                         {displayName(assignee)}
                     </span>
                 </div>
@@ -323,6 +324,7 @@ function TaskCard({
 
             {can.manageTasks && (
                 <Select
+                    quiet
                     aria-label={`Status for ${task.title}`}
                     value={task.status}
                     disabled={statusMutation.isPending}
@@ -332,7 +334,7 @@ function TaskCard({
                             status: event.target.value as TaskStatus,
                         })
                     }
-                    className="!py-1 text-xs"
+                    className="text-xs"
                     options={TASK_STATUSES.map((value) => ({
                         value,
                         label: TASK_STATUS_LABELS[value],
@@ -401,7 +403,7 @@ export function TasksPanel({
 
     if (isPending) {
         return (
-            <div className="flex items-center gap-2 py-12 text-sm text-neutral-500 dark:text-neutral-400">
+            <div className="flex items-center gap-2 py-12 text-sm text-muted">
                 <Spinner />
                 Loading tasks…
             </div>
@@ -479,7 +481,7 @@ export function TasksPanel({
                         {filtering && (
                             <p
                                 role="status"
-                                className="pb-1.5 text-xs text-neutral-500 dark:text-neutral-400"
+                                className="pb-1.5 text-xs text-muted"
                             >
                                 {visible.length} of {all.length}
                             </p>
@@ -607,13 +609,13 @@ export function TasksPanel({
                                         "bg-indigo-50/70 ring-1 ring-indigo-200 dark:bg-indigo-950/30 dark:ring-indigo-900",
                                 )}
                             >
-                                <h2 className="flex items-center gap-2 text-xs font-semibold tracking-wide text-neutral-500 uppercase dark:text-neutral-400">
+                                <h2 className="text-label flex items-center gap-2 px-0.5 text-muted">
                                     <span
                                         aria-hidden="true"
                                         className={`size-1.5 rounded-full ${COLUMN_ACCENTS[status]}`}
                                     />
                                     {TASK_STATUS_LABELS[status]}
-                                    <span className="font-normal text-neutral-400">
+                                    <span className="rounded-full bg-sunken px-1.5 py-0.5 font-semibold text-faint tabular-nums">
                                         {column.length}
                                     </span>
                                 </h2>

@@ -11,7 +11,7 @@ import {
     Card,
     EmptyState,
     Field,
-    Spinner,
+    Skeleton,
 } from "../components/ui";
 
 function NewProjectForm({ onDone }: { onDone: () => void }) {
@@ -90,42 +90,74 @@ function NewProjectForm({ onDone }: { onDone: () => void }) {
     );
 }
 
-function ProjectRow({ entry }: { entry: ProjectListEntry }) {
+function ProjectCard({ entry }: { entry: ProjectListEntry }) {
     const created = formatDate(entry.project.createdAt);
+    const members = entry.project.members ?? 0;
 
     return (
-        <Card className="transition-colors hover:ring-neutral-300 dark:hover:ring-neutral-700">
+        <Card className="group transition-ui hover:-translate-y-0.5 hover:border-indigo-300 hover:shadow-overlay dark:hover:border-indigo-800">
             <Link
                 to={`/projects/${entry.project._id}`}
-                className="flex items-start justify-between gap-4 rounded-lg p-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
+                className="flex h-full flex-col gap-3 rounded-xl p-5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
             >
-                <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">
+                <div className="flex items-start justify-between gap-3">
+                    <h2 className="text-heading min-w-0 flex-1 text-strong transition-ui group-hover:text-indigo-600 dark:group-hover:text-indigo-400">
                         {entry.project.name}
-                    </p>
-                    <p className="mt-0.5 line-clamp-2 text-sm text-neutral-500 dark:text-neutral-400">
-                        {entry.project.description || "No description"}
-                    </p>
-                    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-neutral-500 dark:text-neutral-400">
-                        <span>
-                            {entry.project.members ?? 0}{" "}
-                            {entry.project.members === 1 ? "member" : "members"}
-                        </span>
-                        {created && <span>Created {created}</span>}
-                    </div>
+                    </h2>
+                    {/*
+                     * The caller's own role on this project, from the
+                     * getProjects aggregation. The detail page re-derives it
+                     * from the member list rather than trusting this copy,
+                     * which goes stale as soon as an admin changes it.
+                     */}
+                    <Badge
+                        tone={entry.role === "member" ? "neutral" : "accent"}
+                    >
+                        {ROLE_LABELS[entry.role]}
+                    </Badge>
                 </div>
 
-                {/*
-                 * The caller's own role on this project, from the getProjects
-                 * aggregation. The detail page re-derives it from the member
-                 * list rather than trusting this copy, which goes stale as soon
-                 * as an admin changes it.
-                 */}
-                <Badge tone={entry.role === "member" ? "neutral" : "accent"}>
-                    {ROLE_LABELS[entry.role]}
-                </Badge>
+                <p className="line-clamp-2 flex-1 text-sm text-muted">
+                    {entry.project.description || "No description"}
+                </p>
+
+                <div className="flex items-center gap-3 border-t border-hairline pt-3 text-xs text-faint">
+                    <span className="inline-flex items-center gap-1.5">
+                        <svg
+                            aria-hidden="true"
+                            viewBox="0 0 20 20"
+                            fill="currentColor"
+                            className="size-3.5"
+                        >
+                            <path d="M10 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM3.465 16.29A7.5 7.5 0 0 1 16.535 16.29a.75.75 0 0 1-.64 1.14H4.105a.75.75 0 0 1-.64-1.14Z" />
+                        </svg>
+                        {members} {members === 1 ? "member" : "members"}
+                    </span>
+                    {created && <span>Created {created}</span>}
+                </div>
             </Link>
         </Card>
+    );
+}
+
+/** Shaped like the cards it stands in for, so the grid does not jump. */
+function ProjectGridSkeleton() {
+    return (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {[0, 1, 2].map((i) => (
+                <Card key={i} className="space-y-3 p-5">
+                    <div className="flex items-start justify-between gap-3">
+                        <Skeleton className="h-4 w-2/5" />
+                        <Skeleton className="h-4 w-12" />
+                    </div>
+                    <Skeleton className="h-3 w-full" />
+                    <Skeleton className="h-3 w-3/4" />
+                    <div className="border-t border-hairline pt-3">
+                        <Skeleton className="h-3 w-1/3" />
+                    </div>
+                </Card>
+            ))}
+        </div>
     );
 }
 
@@ -139,12 +171,10 @@ export function Projects() {
 
     return (
         <div className="space-y-6">
-            <div className="flex items-center justify-between gap-4">
+            <div className="flex items-end justify-between gap-4">
                 <div>
-                    <h1 className="text-lg font-semibold tracking-tight">
-                        Projects
-                    </h1>
-                    <p className="text-sm text-neutral-500 dark:text-neutral-400">
+                    <h1 className="text-display text-strong">Projects</h1>
+                    <p className="mt-1 text-sm text-muted">
                         Projects you own or have been added to.
                     </p>
                 </div>
@@ -158,10 +188,7 @@ export function Projects() {
             {creating && <NewProjectForm onDone={() => setCreating(false)} />}
 
             {isPending ? (
-                <div className="flex items-center gap-2 py-12 text-sm text-neutral-500 dark:text-neutral-400">
-                    <Spinner />
-                    Loading projects…
-                </div>
+                <ProjectGridSkeleton />
             ) : error ? (
                 <Alert>
                     {error instanceof ApiError
@@ -169,9 +196,9 @@ export function Projects() {
                         : "Could not load projects."}
                 </Alert>
             ) : data && data.length > 0 ? (
-                <div className="space-y-2">
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                     {data.map((entry) => (
-                        <ProjectRow key={entry.project._id} entry={entry} />
+                        <ProjectCard key={entry.project._id} entry={entry} />
                     ))}
                 </div>
             ) : (

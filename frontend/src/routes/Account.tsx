@@ -114,7 +114,7 @@ function AvatarForm({ user }: { user: User }) {
                         }
                         className="block w-full text-sm text-neutral-600 file:mr-3 file:rounded-md file:border-0 file:bg-neutral-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-neutral-900 hover:file:bg-neutral-200 dark:text-neutral-400 dark:file:bg-neutral-800 dark:file:text-neutral-100 dark:hover:file:bg-neutral-700"
                     />
-                    <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                    <p className="text-xs text-muted">
                         JPEG, PNG, GIF or WebP, up to 500 KB.
                     </p>
                 </div>
@@ -269,7 +269,7 @@ function ChangePasswordForm() {
                 error={mismatch}
             />
 
-            <p className="text-xs text-neutral-500 dark:text-neutral-400">
+            <p className="text-xs text-muted">
                 Changing your password signs out every device, including this
                 one.
             </p>
@@ -305,7 +305,7 @@ export function Account() {
                 <h1 className="text-lg font-semibold tracking-tight">
                     Account
                 </h1>
-                <p className="text-sm text-neutral-500 dark:text-neutral-400">
+                <p className="text-sm text-muted">
                     Your profile and sign-in details.
                 </p>
             </div>
@@ -321,7 +321,7 @@ export function Account() {
                         <p className="truncate text-sm font-medium">
                             {displayName(user)}
                         </p>
-                        <p className="truncate text-xs text-neutral-500 dark:text-neutral-400">
+                        <p className="truncate text-xs text-muted">
                             @{user.username}
                             {joined && ` · joined ${joined}`}
                         </p>
@@ -330,15 +330,11 @@ export function Account() {
 
                 <dl className="mt-4 grid gap-3 border-t border-neutral-200 pt-4 text-sm sm:grid-cols-2 dark:border-neutral-800">
                     <div>
-                        <dt className="text-xs text-neutral-500 dark:text-neutral-400">
-                            Email
-                        </dt>
+                        <dt className="text-xs text-muted">Email</dt>
                         <dd className="mt-0.5 truncate">{user.email}</dd>
                     </div>
                     <div>
-                        <dt className="text-xs text-neutral-500 dark:text-neutral-400">
-                            Verification
-                        </dt>
+                        <dt className="text-xs text-muted">Verification</dt>
                         <dd className="mt-0.5">
                             {user.isEmailVerified === false ? (
                                 <Badge>Not verified</Badge>

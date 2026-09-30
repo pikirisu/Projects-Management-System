@@ -44,7 +44,7 @@ export class ErrorBoundary extends Component<Props, State> {
                     <h1 className="text-base font-semibold tracking-tight">
                         Something went wrong
                     </h1>
-                    <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
+                    <p className="mt-2 text-sm text-muted">
                         This screen stopped working. Nothing you had saved is
                         affected — reloading usually clears it.
                     </p>
@@ -66,7 +66,7 @@ export class ErrorBoundary extends Component<Props, State> {
                      * one line it holds is the difference between a useful bug
                      * report and "it broke".
                      */}
-                    <details className="mt-5 text-xs text-neutral-500 dark:text-neutral-400">
+                    <details className="mt-5 text-xs text-muted">
                         <summary className="cursor-pointer select-none">
                             Technical details
                         </summary>

@@ -174,7 +174,7 @@ function MemberRow({
                                 </span>
                             )}
                         </p>
-                        <p className="truncate text-xs text-neutral-500 dark:text-neutral-400">
+                        <p className="truncate text-xs text-muted">
                             @{entry.user.username}
                             {joined && ` · joined ${joined}`}
                         </p>
@@ -217,7 +217,7 @@ function MemberRow({
                             </ConfirmButton>
                         </>
                     ) : (
-                        <span className="text-xs text-neutral-500 dark:text-neutral-400">
+                        <span className="text-xs text-muted">
                             {ROLE_LABELS[entry.role]}
                         </span>
                     )}
@@ -251,7 +251,7 @@ export function MembersPanel({
 
     if (isPending) {
         return (
-            <div className="flex items-center gap-2 py-12 text-sm text-neutral-500 dark:text-neutral-400">
+            <div className="flex items-center gap-2 py-12 text-sm text-muted">
                 <Spinner />
                 Loading members…
             </div>

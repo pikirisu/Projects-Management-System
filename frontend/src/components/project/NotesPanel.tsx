@@ -130,7 +130,7 @@ function NoteCard({
             <p className="text-sm whitespace-pre-wrap">{note.content}</p>
 
             <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400">
+                <div className="flex items-center gap-2 text-xs text-muted">
                     <Avatar
                         size="sm"
                         src={author?.avatar?.url}
@@ -188,7 +188,7 @@ export function NotesPanel({
 
     if (isPending) {
         return (
-            <div className="flex items-center gap-2 py-12 text-sm text-neutral-500 dark:text-neutral-400">
+            <div className="flex items-center gap-2 py-12 text-sm text-muted">
                 <Spinner />
                 Loading notes…
             </div>

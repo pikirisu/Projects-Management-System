@@ -30,7 +30,7 @@ export function VerifyEmail() {
                 subtitle="This only takes a moment."
                 footer={null}
             >
-                <div className="flex items-center gap-2 text-sm text-neutral-500 dark:text-neutral-400">
+                <div className="flex items-center gap-2 text-sm text-muted">
                     <Spinner />
                     Checking your link…
                 </div>
@@ -81,7 +81,7 @@ export function VerifyEmail() {
                  * Resending needs an authenticated caller, so the only route
                  * back is to sign in -- the banner in the app offers it there.
                  */}
-                <p className="text-sm text-neutral-500 dark:text-neutral-400">
+                <p className="text-sm text-muted">
                     Sign in and use the banner at the top of the page to send
                     yourself a new link.
                 </p>
