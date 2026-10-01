@@ -1,473 +1,181 @@
-# Backend One
+# Project Camp
 
-Backend One is a Node.js and Express REST API for project-management workflows. It exposes authentication, health check, project, project-member, task, subtask, and project-note routes backed by MongoDB through Mongoose, with role-based access control enforced per project (`admin`, `project_admin`, `member`).
+A project-management app with per-project, role-based access control: an
+Express 5 + MongoDB REST API, and a React 19 client with a drag-and-drop task
+board, a cross-project "My tasks" view, due dates, priorities and progress.
 
-A React single-page client lives in `frontend/` and consumes that API: sign-in, a project list, and a per-project workspace with a task board, subtasks, attachments, notes, and member management. The client mirrors the server's role rules so it never offers an action the API would reject.
+- **Projects and roles.** Each project has its own admins, project admins and
+  members. The API enforces every rule; the client only decides what to offer.
+- **A board per project.** Drag cards between columns, filter by assignee,
+  priority or text, sort by due date or priority, and open any task by URL.
+- **My tasks.** Everything assigned to you across every project, grouped by
+  overdue, today, this week and later.
+- **Accounts that hold up.** Email verification, password reset, profile photos,
+  and a password change that ends every session, including stolen ones.
 
-## Features
+## Architecture
 
-- Express server with JSON, URL-encoded, cookie, CORS, and static-file middleware.
-- MongoDB connection using Mongoose.
-- User registration with unique username/email checks and bcrypt password hashing.
-- Email verification token generation and resend-verification flow.
-- Login, logout, access-token refresh, and current-user lookup using JWTs.
-- Forgot-password and reset-password flows using temporary hashed tokens.
-- Request validation with `express-validator`.
-- JWT authentication middleware that reads the access token from cookies or the `Authorization` header.
-- Project creation, listing, lookup, update, and deletion route handlers.
-- Project-member add, list, role-update, and removal route handlers, all requiring project membership.
-- Task CRUD, task assignment, status tracking, and multi-file attachment uploads (via Multer, stored in Cloudinary when configured and on local disk otherwise), including removing a single attachment without deleting its task.
-- Subtask CRUD, with member access limited to toggling completion (only admin/project_admin can create, delete, or rename subtasks).
-- Project notes CRUD, restricted to admin for create/update/delete; all project roles can read.
-- Mongoose schemas for users, projects, project members, tasks, subtasks, and project notes.
-- Project-scoped resource authorization: task, subtask, and note lookups are constrained to the project in the URL, not just the child's own id.
-- Task assignees are checked against project membership, so a task cannot be assigned to someone who has no way to open the project it lives in.
-- Every project keeps at least one admin: demoting or removing the last one is refused with a 409, because no other role can rename, delete, or re-staff a project.
-- Upload allowlist (MIME plus extension must agree), randomised stored filenames, and uploads served as non-executable attachments.
-- Cascading project deletes: removing a project also removes its members, tasks, subtasks, notes, and stored attachment blobs.
-- Security headers via `helmet`, and per-IP rate limiting with a stricter budget on authentication endpoints.
-- Hardened auth cookies (`httpOnly`, `SameSite`, and a `maxAge` matching the token's own expiry).
-- Changing a password ends every session: the reset and the signed-in change both clear the stored refresh token and stamp the account, and every access token issued before that stamp is refused. Nothing issued before the change keeps working, including a token already in someone else's hands.
-- Secrets are opt-in, not opt-out. The password hash, the refresh token and both temporary-token pairs are `select: false`, so no query loads them unless it asks — only signing in, changing a password and rotating a refresh token do. A `toJSON` transform backstops anything loaded deliberately and serialized by accident.
-- Centralized JSON error handling for `ApiError`, Multer upload errors, Mongo duplicate keys, Mongoose validation/cast errors, malformed ObjectIds, and body-parser rejections (a body over the 16kb limit answers 413 and unparseable JSON answers 400, rather than both reporting a server fault).
-- Passwords are never trimmed and never coerced. Trimming would store something other than what was typed, and a non-string would reach `bcrypt.compare`, which throws.
-- Profile photos reuse the storage abstraction the task attachments use, on a narrower allowlist — images only, 512 KB — because whatever lands there is rendered in an `<img>` on every screen that shows the user. Replacing one deletes the image it replaced, and the response carries only the URL; where the bytes live is the server's business.
-- Uploads are served from two mounts with different headers, because the two kinds are used differently. `/images` (attachments) forces `Content-Disposition: attachment` and keeps helmet's `Cross-Origin-Resource-Policy: same-origin`: arbitrary types land there and the client links to them. `/avatars` drops both, because a photo has to render in an `<img>` from the client's origin — and can safely, since that allowlist is raster images only. `nosniff` stays on both.
+```mermaid
+flowchart LR
+    SPA["React SPA<br/>(TanStack Query)"] -- "Bearer JWT, JSON / multipart" --> API["Express 5 API"]
+    API --> DB[("MongoDB")]
+    API --> Files["Cloudinary<br/>(local disk in dev and CI)"]
+    API --> Mail["SMTP<br/>(Mailtrap)"]
+```
 
-### Web client (`frontend/`)
-
-- An error boundary around the app. React unmounts the whole tree when a render throws, so without one a single bad field replaces everything with a blank page; the fallback explains what happened, offers a reload, and keeps the message where a bug report can reach it.
-- Bearer-token session with a single-flight refresh, so several queries failing at once cannot spend the same rotating refresh token twice.
-- A session that ends while the app is open signs the user out and says why. The API client is where a refused refresh is discovered, so it announces it; the auth context listens, drops the session, and the sign-in screen explains that it ended rather than leaving someone to guess why their work went away. A network failure is deliberately not treated as an expiry.
-- Forgot-password and reset-password screens. `FORGOT_PASSWORD_REDIRECT_URL` points the emailed link at `/reset-password/<token>` in the client, so that route has to exist for the flow the API implements to be reachable at all.
-- Email-verification screen, plus an in-app banner that offers an unverified account a fresh link while it still has a session to request one with.
-- Account screen showing the signed-in profile and verification state, with a profile-photo picker that previews the chosen image before sending it, a display-name form, and a change-password form that explains up front that every session ends — including the current one — and signs the user out afterwards.
-- Project list linking into a per-project workspace with Tasks, Notes, Members, and (for admins) Settings tabs.
-- Task board grouped by status, with optimistic status changes that roll back to the previous board when the server refuses the move.
-- Cards can be dragged between columns, and the status dropdown on each card stays exactly as it was. Native drag-and-drop is mouse-only, so it is an addition to a control that works with a keyboard rather than a replacement for one; both send the same request. Only a manager can drag, since a member who could would watch the card snap back on a 403.
-- Board search and assignee filter, including "assigned to me" and "unassigned", applied in the browser because `GET /tasks/:projectId` returns the whole project in one response and takes no query parameters.
-- Task slide-over: description, assignee, attachments with sizes, and subtasks that any member may tick off.
-- Task create and edit send JSON when no files are selected and multipart when they are, so an empty assignee is omitted rather than failing the `isMongoId` validator.
-- Member management with add-by-email and role changes; your own row is deliberately not editable, so the last admin cannot lock themselves out.
-- Role-aware UI throughout: a plain member sees no task controls, and notes stay read-only for anyone who is not a project `admin`.
-- Two-step inline confirmation for destructive actions instead of `window.confirm`, which some embedded browsers suppress outright.
-
-## Tech Stack
-
-| Category       | Technology                                             |
-| -------------- | ------------------------------------------------------ |
-| Languages      | JavaScript, Node.js                                    |
-| Frameworks     | Express                                                |
-| Database       | MongoDB                                                |
-| ODM            | Mongoose                                               |
-| Authentication | JSON Web Tokens, bcrypt                                |
-| Validation     | express-validator                                      |
-| Email          | Nodemailer, Mailgen, Mailtrap-style SMTP configuration |
-| File Uploads   | Multer, Cloudinary                                     |
-| Middleware     | cookie-parser, cors, dotenv                            |
-| Tools          | npm, nodemon, Prettier                                 |
-
-## Project Structure
+Every request to `/api/v1` passes through the same pipeline:
 
 ```text
-.
-|-- public/
-|   `-- images/                  # Static image/upload directory
-|-- src/
-|   |-- app.js                   # Express app configuration and route mounting
-|   |-- index.js                 # Environment loading, database connection, server startup
-|   |-- controllers/             # Route handler logic
-|   |-- db/                      # MongoDB connection helper
-|   |-- middlewares/             # Auth, validation, and upload middleware
-|   |-- models/                  # Mongoose schemas and models
-|   |-- routes/                  # Express route definitions
-|   |-- utils/                   # API response/error helpers, constants, email utilities
-|   `-- validators/              # express-validator request validators
-|-- frontend/                    # React + Vite single-page client
-|   |-- src/
-|   |   |-- components/          # UI kit and per-project panels
-|   |   |-- context/             # Auth provider and session restore
-|   |   |-- lib/                 # API client, shared types, display helpers
-|   |   |-- routes/              # Login, Register, Projects, ProjectDetail
-|   |   `-- test/                # Vitest setup and render helpers
-|   `-- vitest.config.ts         # jsdom test config, separate from vite.config.ts
-|-- scripts/
-|   |-- verify.mjs               # End-to-end backend smoke test
-|   `-- seed-demo.mjs            # Populates a running server with demo data
-|-- test/                        # Ignored reference copy and PRD, not active test specs
-|-- package.json                 # Scripts and dependency metadata
-|-- package-lock.json            # Locked npm dependency tree
-|-- CHANGELOG.md                 # Short project change notes
-`-- README.md                    # Project documentation
+rate limit → verifyJWT → project-role guard → validator → controller → error handler
 ```
 
-## Installation
+| Layer         | Where                                 | What it does                                                                                                               |
+| ------------- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Role guard    | `src/middlewares/auth.middleware.js`  | Resolves the caller's role on `:projectId`; routes read as a permission table (`anyMember`, `managersOnly`, `adminsOnly`). |
+| Validators    | `src/validators/index.js`             | `express-validator` rule sets; each ends in `validate`, which answers 422 per field.                                       |
+| Controllers   | `src/controllers/`                    | Scope every query to the approved project; no `try/catch`, since Express 5 forwards rejected promises.                     |
+| Error handler | `src/middlewares/error.middleware.js` | One pure `toApiError()` maps every error class to one JSON envelope.                                                       |
+| Client data   | `frontend/src/lib/queries.ts`         | Query keys and hooks in one place; the optimistic card move lives here.                                                    |
 
-1. Clone the repository.
+## Design decisions
+
+Each one is marked in the code with a `Decision:` comment, so
+`grep -rn "Decision:" src frontend/src` lists them all.
+
+| Decision                                                                                                                                                                   | Why                                                                                                                                                                                         |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **A project you are not in answers 404, not 403** ([auth.middleware.js](src/middlewares/auth.middleware.js))                                                               | A 403 would confirm the id exists. Child resources are scoped the same way, so a task id from another project is also a 404 (IDOR).                                                         |
+| **A password change ends every session** ([user.models.js](src/models/user.models.js), [tokens.js](src/utils/tokens.js))                                                   | JWTs cannot be revoked one by one, but stamping `credentialsChangedAt` revokes every token issued before it. The refresh token is cleared too.                                              |
+| **Secrets are opt-in** ([user.models.js](src/models/user.models.js))                                                                                                       | Every secret field is `select: false`, so code that never asks for it cannot leak it. A `toJSON` transform backstops what is loaded on purpose.                                             |
+| **Sign-in leaks nothing** ([user.models.js](src/models/user.models.js))                                                                                                    | An unknown email and a wrong password get the same 401 and the same bcrypt cost; forgot-password always answers 200.                                                                        |
+| **The unique index is the source of truth** ([auth.controllers.js](src/controllers/auth.controllers.js), [project.controllers.js](src/controllers/project.controllers.js)) | Registration and adding a member insert and let E11000 answer 409, instead of a check-then-act read that two requests can race. Registration is one write, not three round trips.           |
+| **A project always keeps an admin** ([project.controllers.js](src/controllers/project.controllers.js))                                                                     | Role changes write, re-count admins, and undo themselves if the count hits zero. Without transactions (which need a replica set) this is what stops two admins demoting each other at once. |
+| **Uploads are allowlisted twice and served apart** ([multer.middleware.js](src/middlewares/multer.middleware.js), [app.js](src/app.js))                                    | MIME type and extension must agree, and SVG is refused. Attachments always download; avatars render inline from their own directory.                                                        |
+| **Local file deletes cannot escape** ([storage.js](src/utils/storage.js))                                                                                                  | A stored key like `../../src/app.js` is resolved and refused before `unlink`.                                                                                                               |
+| **Single-flight token refresh** ([api.ts](frontend/src/lib/api.ts))                                                                                                        | The API rotates refresh tokens, so parallel 401s must share one refresh or they spend the same token twice.                                                                                 |
+| **Optimistic card moves, with rollback** ([queries.ts](frontend/src/lib/queries.ts))                                                                                       | A drag that waits for the server feels broken; a refusal restores the exact previous board and says why in a toast.                                                                         |
+| **Due dates are calendar days** ([display.ts](frontend/src/lib/display.ts))                                                                                                | Stored as UTC midnight and compared in UTC, so "3 Oct" never shows as "2 Oct" west of Greenwich.                                                                                            |
+
+## Data model
+
+| Collection       | Holds                                                                   | Indexes                             |
+| ---------------- | ----------------------------------------------------------------------- | ----------------------------------- |
+| `users`          | Account, avatar, hashed password and token hashes (all `select: false`) | `email` unique, `username` unique   |
+| `projects`       | Name, description, creator                                              | —                                   |
+| `projectmembers` | One role per user per project                                           | `{project, user}` unique, `{user}`  |
+| `tasks`          | Status, priority, due date, assignee, attachments                       | `{project, status}`, `{assignedTo}` |
+| `subtasks`       | Title, done flag, parent task                                           | `{task}`                            |
+| `projectnotes`   | Admin-written notes                                                     | `{project}`                         |
+
+`GET /projects` returns each project's member count and task counts by status in
+one aggregation, computed by `$lookup` sub-pipelines rather than by loading the
+rows it counts.
+
+## API
+
+All routes are under `/api/v1`. "Any" means any role on the project.
+
+| Method                 | Route                                                                                                                             | Who                                             |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| `POST`                 | `/auth/register`, `/auth/login`, `/auth/refresh-token`, `/auth/forgot-password`, `/auth/reset-password/:token`                    | Public                                          |
+| `GET`                  | `/auth/verify-email/:token`                                                                                                       | Public                                          |
+| `GET` `POST` `PATCH`   | `/auth/current-user`, `/auth/logout`, `/auth/profile`, `/auth/avatar`, `/auth/change-password`, `/auth/resend-email-verification` | Signed in                                       |
+| `GET`                  | `/me/tasks`                                                                                                                       | Signed in                                       |
+| `GET` `POST`           | `/projects`                                                                                                                       | Signed in                                       |
+| `GET` · `PUT` `DELETE` | `/projects/:projectId`                                                                                                            | Any · Admin                                     |
+| `GET` · `POST`         | `/projects/:projectId/members`                                                                                                    | Any · Admin                                     |
+| `PUT` `DELETE`         | `/projects/:projectId/members/:userId`                                                                                            | Admin                                           |
+| `GET` · `POST`         | `/tasks/:projectId`                                                                                                               | Any · Manager                                   |
+| `GET` · `PUT` `DELETE` | `/tasks/:projectId/t/:taskId`                                                                                                     | Any · Manager                                   |
+| `DELETE`               | `/tasks/:projectId/t/:taskId/attachments/:attachmentId`                                                                           | Manager                                         |
+| `POST`                 | `/tasks/:projectId/t/:taskId/subtasks`                                                                                            | Manager                                         |
+| `PUT` · `DELETE`       | `/tasks/:projectId/st/:subTaskId`                                                                                                 | Any (tick only; rename needs Manager) · Manager |
+| `GET` · `POST`         | `/notes/:projectId`                                                                                                               | Any · Admin                                     |
+| `GET` · `PUT` `DELETE` | `/notes/:projectId/n/:noteId`                                                                                                     | Any · Admin                                     |
+
+"Manager" is `admin` or `project_admin`. Tasks accept `title`, `description`,
+`status`, `priority`, `assignedTo` and `dueDate`; sending `null` (or `""` in a
+multipart form) clears the assignee or due date. Every response uses the same
+envelope: `{ statusCode, data, message, success, errors }`.
+
+## Running it
+
+Requires Node 20+ and MongoDB.
 
 ```bash
-git clone <repository-url>
-cd Backend_One
-```
-
-2. Install dependencies.
-
-```bash
+cp .env.example .env            # then fill in MONGO_URI and the two secrets
 npm install
-```
+npm run dev                     # API on http://localhost:8000
 
-3. Create a `.env` file in the project root and add the variables listed below.
-
-4. Make sure MongoDB is running and that `MONGO_URI` points to a reachable database.
-
-5. If you plan to use email verification or password reset, configure the SMTP variables expected by `src/utils/mail.js`.
-
-## Environment Variables
-
-The application loads environment variables from `.env` in the project root.
-
-| Variable                                                                 | Required           | Used By                     | Description                                                                                                                                                                                                                      |
-| ------------------------------------------------------------------------ | ------------------ | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MONGO_URI`                                                              | Yes                | `src/db/index.js`           | MongoDB connection string.                                                                                                                                                                                                       |
-| `PORT`                                                                   | No                 | `src/index.js`              | Server port. Defaults to `3000`.                                                                                                                                                                                                 |
-| `CORS_ORIGIN`                                                            | No                 | `src/app.js`                | Comma-separated list of allowed origins. Unset or `*` reflects the caller's origin and logs a startup warning, since `*` alongside `credentials: true` lets any site send authenticated requests.                                |
-| `ACCESS_TOKEN_SECRET`                                                    | Yes                | User model, auth middleware | Secret used to sign and verify access tokens.                                                                                                                                                                                    |
-| `ACCESS_TOKEN_EXPIRY`                                                    | Yes                | User model                  | Access-token lifetime, such as `1d` or `15m`.                                                                                                                                                                                    |
-| `REFRESH_TOKEN_SECRET`                                                   | Yes                | User model, auth controller | Secret used to sign and verify refresh tokens.                                                                                                                                                                                   |
-| `REFRESH_TOKEN_EXPIRY`                                                   | Yes                | User model                  | Refresh-token lifetime, such as `10d`.                                                                                                                                                                                           |
-| `FORGOT_PASSWORD_REDIRECT_URL`                                           | Yes                | Auth controller             | Frontend URL used to build password-reset links. The token is appended as a path segment, so this must match the client's `/reset-password/:token` route.                                                                        |
-| `EMAIL_VERIFICATION_REDIRECT_URL`                                        | No                 | Auth controller             | Frontend URL used to build email-verification links, same convention. Unset, the email links straight at the API endpoint, which answers JSON -- fine for an API-only deployment, a dead end for anyone opening it in a browser. |
-| `MAILTRAP_SMTP_HOST`                                                     | Yes, for email     | Mail utility                | SMTP host for outgoing verification/reset emails.                                                                                                                                                                                |
-| `MAILTRAP_SMTP_PORT`                                                     | Yes, for email     | Mail utility                | SMTP port for outgoing email.                                                                                                                                                                                                    |
-| `MAILTRAP_SMTP_USER`                                                     | Yes, for email     | Mail utility                | SMTP username.                                                                                                                                                                                                                   |
-| `MAILTRAP_SMTP_PASS`                                                     | Yes, for email     | Mail utility                | SMTP password.                                                                                                                                                                                                                   |
-| `SERVER_URL`                                                             | Yes                | Storage util                | Base URL used to build attachment links for the local storage driver (e.g. `http://localhost:8000`). Also used by `scripts/verify.mjs`.                                                                                          |
-| `CLOUDINARY_CLOUD_NAME` / `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | Yes, in production | Storage util                | When all three are set, attachments upload to Cloudinary. With any missing, the app writes to `public/images` instead. Required on any deployed host, whose filesystem is ephemeral.                                             |
-| `NODE_ENV`                                                               | No                 | Cookie options              | When set to `production`, auth cookies are sent with `secure: true`. Leave unset for local HTTP testing.                                                                                                                         |
-| `COOKIE_SAMESITE`                                                        | No                 | Cookie options              | `strict` (default), `lax`, or `none`. Use `none` only for a cross-site frontend; it forces `secure: true` regardless of `NODE_ENV`.                                                                                              |
-| `REQUIRE_EMAIL_VERIFICATION`                                             | No                 | Auth controller             | When `"true"`, login rejects users whose email is unverified with a 403. Defaults to off.                                                                                                                                        |
-| `RATE_LIMIT_ENABLED`                                                     | No                 | Rate limit middleware       | Set to `"false"` to disable all rate limiting. Needed when running `scripts/verify.mjs` repeatedly.                                                                                                                              |
-| `RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW_MS`                                | No                 | Rate limit middleware       | Global budget per IP. Defaults to 300 requests per 15 minutes.                                                                                                                                                                   |
-| `AUTH_RATE_LIMIT_MAX` / `AUTH_RATE_LIMIT_WINDOW_MS`                      | No                 | Rate limit middleware       | Budget for auth endpoints. Defaults to 20 _failed_ attempts per 15 minutes; successful logins are not counted.                                                                                                                   |
-| `TRUST_PROXY`                                                            | No                 | `src/app.js`                | Number of proxy hops to trust. Required behind a reverse proxy so rate limiting sees the real client IP. Leave unset locally.                                                                                                    |
-
-Example `.env` shape:
-
-```env
-MONGO_URI=mongodb://127.0.0.1:27017/backend_one
-PORT=3000
-CORS_ORIGIN=http://localhost:5173
-
-ACCESS_TOKEN_SECRET=replace-with-a-strong-secret
-ACCESS_TOKEN_EXPIRY=1d
-REFRESH_TOKEN_SECRET=replace-with-a-strong-secret
-REFRESH_TOKEN_EXPIRY=10d
-
-FORGOT_PASSWORD_REDIRECT_URL=http://localhost:5173/reset-password
-EMAIL_VERIFICATION_REDIRECT_URL=http://localhost:5173/verify-email
-
-MAILTRAP_SMTP_HOST=sandbox.smtp.mailtrap.io
-MAILTRAP_SMTP_PORT=2525
-MAILTRAP_SMTP_USER=replace-with-smtp-user
-MAILTRAP_SMTP_PASS=replace-with-smtp-password
-
-SERVER_URL=http://localhost:3000
-
-# Optional security tuning (defaults shown)
-COOKIE_SAMESITE=strict
-REQUIRE_EMAIL_VERIFICATION=false
-RATE_LIMIT_ENABLED=true
-```
-
-Note: `mail.js` catches SMTP errors and logs them rather than throwing, so registration/password-reset requests still return success even if the email itself fails to send (e.g. wrong credentials, or Mailtrap's free-tier per-second rate limit). Check the server console when debugging email delivery.
-
-## Running the Project
-
-Start the development server with nodemon:
-
-```bash
-npm run dev
-```
-
-Start the server with Node:
-
-```bash
-npm start
-```
-
-By default, the server listens on:
-
-```text
-http://localhost:3000
-```
-
-### Web client
-
-```bash
 cd frontend
+cp .env.example .env.local
 npm install
-npm run dev          # http://localhost:5173
+npm run dev                     # client on http://localhost:5173
+
+npm run seed                    # (from the root) two demo accounts, two projects
 ```
 
-The client reads its API base URL from `VITE_API_URL` (see `frontend/.env.example`); it
-defaults to `http://localhost:8000/api/v1`. Set `CORS_ORIGIN=http://localhost:5173` in the
-server's `.env` so the browser will send credentialed requests.
+The seed prints the demo sign-ins; both use the password `DemoPass123!`.
 
-### Demo data
+Without Cloudinary credentials, uploads are written to `public/` and served by
+the API, which is the right setting for development and CI. A deployed server
+needs Cloudinary, because a PaaS filesystem is wiped on every redeploy.
 
-With the server running, `scripts/seed-demo.mjs` creates two accounts, a project with members
-in two roles, four tasks spread across every status with subtasks, and a note — enough to see
-every screen populated:
+### Upgrading an existing database
 
-```bash
-npm run seed           # add the demo workspace if it is not already there
-npm run seed -- --reset   # rebuild it from scratch
-```
+Project names used to be unique across the whole server, enforced by a
+unique index called `name_1` on the `projects` collection. Mongoose creates
+the indexes a schema declares, but never drops one the schema stops
+declaring. So a database created before this change keeps refusing a second
+project with an existing name until that index is dropped, once:
 
-It prints the credentials to sign in with when it finishes.
+- **MongoDB Atlas:** Browse Collections, open `projects`, then the Indexes
+  tab, and drop `name_1`.
+- **mongosh:** `db.projects.dropIndex("name_1")`
 
-## API Endpoints
+A fresh database never has the index, which is why CI does not need this.
 
-The current Express app mounts routes under `/api/v1` for health checks, authentication, and projects.
+## Testing
 
-| Method   | Endpoint                                                       | Auth Required | Description                                                                                                 |
-| -------- | -------------------------------------------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------- |
-| `GET`    | `/`                                                            | No            | Returns a welcome message.                                                                                  |
-| `GET`    | `/api/v1/healthcheck`                                          | No            | Returns server health status.                                                                               |
-| `POST`   | `/api/v1/auth/register`                                        | No            | Registers a user and sends an email verification message.                                                   |
-| `POST`   | `/api/v1/auth/login`                                           | No            | Authenticates a user and returns access/refresh tokens.                                                     |
-| `GET`    | `/api/v1/auth/verify-email/:verificationToken`                 | No            | Verifies a user's email with a temporary token.                                                             |
-| `POST`   | `/api/v1/auth/refresh-token`                                   | No            | Refreshes the access token using a refresh token from cookies or the request body.                          |
-| `POST`   | `/api/v1/auth/forgot-password`                                 | No            | Sends a password-reset email for a registered account.                                                      |
-| `POST`   | `/api/v1/auth/reset-password/:resetToken`                      | No            | Resets a password using a temporary reset token.                                                            |
-| `POST`   | `/api/v1/auth/logout`                                          | Yes           | Clears stored refresh token and auth cookies.                                                               |
-| `GET`    | `/api/v1/auth/current-user`                                    | Yes           | Returns the authenticated user.                                                                             |
-| `POST`   | `/api/v1/auth/change-password`                                 | Yes           | Changes the authenticated user's password.                                                                  |
-| `PATCH`  | `/api/v1/auth/profile`                                         | Yes           | Updates the authenticated user's display name. Username and email are identity and are not writable here.   |
-| `PATCH`  | `/api/v1/auth/avatar`                                          | Yes           | Replaces the authenticated user's profile photo (multipart, field `avatar`). Deletes the image it replaces. |
-| `POST`   | `/api/v1/auth/resend-email-verification`                       | Yes           | Sends another email verification message.                                                                   |
-| `GET`    | `/api/v1/projects`                                             | Yes           | Lists projects associated with the authenticated user.                                                      |
-| `POST`   | `/api/v1/projects`                                             | Yes           | Creates a project and adds the creator as an admin member.                                                  |
-| `GET`    | `/api/v1/projects/:projectId`                                  | Yes           | Gets a project by ID.                                                                                       |
-| `PUT`    | `/api/v1/projects/:projectId`                                  | Yes           | Updates a project by ID. Intended for admin users.                                                          |
-| `DELETE` | `/api/v1/projects/:projectId`                                  | Yes           | Deletes a project and cascades to its members, tasks, subtasks, notes, and attachments. Admin only.         |
-| `GET`    | `/api/v1/projects/:projectId/members`                          | Yes           | Lists members for a project.                                                                                |
-| `POST`   | `/api/v1/projects/:projectId/members`                          | Yes           | Adds or updates a project member by email and role. Intended for admin users.                               |
-| `PUT`    | `/api/v1/projects/:projectId/members/:userId`                  | Yes           | Updates a project member role. Admin only.                                                                  |
-| `DELETE` | `/api/v1/projects/:projectId/members/:userId`                  | Yes           | Removes a user from a project. Admin only.                                                                  |
-| `GET`    | `/api/v1/tasks/:projectId`                                     | Yes           | Lists tasks in a project. Any project role.                                                                 |
-| `POST`   | `/api/v1/tasks/:projectId`                                     | Yes           | Creates a task, optionally with file attachments (multipart `attachments` field). Admin/project_admin only. |
-| `GET`    | `/api/v1/tasks/:projectId/t/:taskId`                           | Yes           | Gets a task by ID, with assignee and subtasks populated. Any project role.                                  |
-| `PUT`    | `/api/v1/tasks/:projectId/t/:taskId`                           | Yes           | Updates a task; new attachments are appended. Admin/project_admin only.                                     |
-| `DELETE` | `/api/v1/tasks/:projectId/t/:taskId`                           | Yes           | Deletes a task and its subtasks. Admin/project_admin only.                                                  |
-| `DELETE` | `/api/v1/tasks/:projectId/t/:taskId/attachments/:attachmentId` | Yes           | Removes one attachment from a task and deletes its stored blob. Admin/project_admin only.                   |
-| `POST`   | `/api/v1/tasks/:projectId/t/:taskId/subtasks`                  | Yes           | Creates a subtask. Admin/project_admin only.                                                                |
-| `PUT`    | `/api/v1/tasks/:projectId/st/:subTaskId`                       | Yes           | Updates a subtask. Any project role may toggle `isCompleted`; only admin/project_admin may change `title`.  |
-| `DELETE` | `/api/v1/tasks/:projectId/st/:subTaskId`                       | Yes           | Deletes a subtask. Admin/project_admin only.                                                                |
-| `GET`    | `/api/v1/notes/:projectId`                                     | Yes           | Lists notes in a project. Any project role.                                                                 |
-| `POST`   | `/api/v1/notes/:projectId`                                     | Yes           | Creates a note. Admin only.                                                                                 |
-| `GET`    | `/api/v1/notes/:projectId/n/:noteId`                           | Yes           | Gets a note by ID. Any project role.                                                                        |
-| `PUT`    | `/api/v1/notes/:projectId/n/:noteId`                           | Yes           | Updates a note. Admin only.                                                                                 |
-| `DELETE` | `/api/v1/notes/:projectId/n/:noteId`                           | Yes           | Deletes a note. Admin only.                                                                                 |
+| Command                   | What it covers                                                                                                          | Needs                                                       |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `npm test`                | Token freshness, upload path traversal, error mapping, link building                                                    | Nothing                                                     |
+| `npm run verify`          | 26 end-to-end scenarios: RBAC, IDOR, upload allowlist, session revocation, last admin, My tasks scoping, cascade delete | A running API (`RATE_LIMIT_ENABLED=false`) and its database |
+| `cd frontend && npm test` | 111 component and unit tests: board, drag and drop, rollback, permissions, auth refresh, forms                          | Nothing                                                     |
 
-## Architecture Overview
+CI (`.github/workflows/ci.yml`) runs all three on every push, the end-to-end
+suite against a real MongoDB service container, plus lint, formatting, a
+typecheck, a production build and a boot check on a case-sensitive filesystem
+(which catches import casing that Windows and macOS forgive).
 
-`src/index.js` loads `.env` via a leading `import "dotenv/config"`, connects to MongoDB, and starts the Express server. The import must come first: ES module imports are evaluated before any statement in the file, so calling `dotenv.config()` further down would leave `process.env` empty while `app.js` and its dependencies are still being loaded. `src/app.js` configures shared middleware, serves static files from `public`, applies CORS settings, and mounts the healthcheck, authentication, and project routers.
+Both projects lint with oxlint: typescript-eslint cannot load TypeScript 7, and
+oxlint implements the React hooks rules natively. `tsc --noEmit` covers types.
 
-Requests flow from route files into validators, middleware, and controller functions. Controllers use Mongoose models to read and write MongoDB documents, then return a consistent `ApiResponse` object. Errors are represented with `ApiError`, async route handlers are wrapped by `asyncHandler`, and a centralized error-handling middleware (last `app.use` in `src/app.js`) serializes `ApiError` instances, Multer upload errors (413 for oversized files, 400 otherwise), Mongo duplicate-key conflicts (409), Mongoose `ValidationError`/`CastError`, and BSON `ObjectId` cast errors into consistent JSON instead of falling through to Express's default HTML error page. Ordering in that handler is load-bearing: `ApiError` is matched first, so a 415 raised by the upload filter keeps the standard envelope.
+## Configuration
 
-Authentication is based on signed JWT access and refresh tokens. Passwords are hashed in the user model before save, refresh tokens are stored on the user document, and protected routes use `verifyJWT` to load the authenticated user from either an HTTP-only cookie or a bearer token.
+See `.env.example` for every variable with a comment. The essentials:
 
-Project access is modeled through the `ProjectMember` collection, which connects users to projects with one of three roles: `admin`, `project_admin`, or `member`. Route-level `validateProjectPermission` middleware enforces which roles may reach each project/task/note endpoint; `updateSubTask` additionally branches in the controller so any project role can toggle a subtask's `isCompleted` while only `admin`/`project_admin` can rename it. Authorization is enforced twice over: `validateProjectPermission` decides whether the caller may reach the project at all, and each controller then scopes its query to that same `projectId` so a child resource belonging to a different project cannot be reached through it. This RBAC behavior, including cross-project access denial, is exercised by `scripts/verify.mjs`.
+| Variable                                                          | Purpose                                                      |
+| ----------------------------------------------------------------- | ------------------------------------------------------------ |
+| `MONGO_URI`                                                       | MongoDB connection string.                                   |
+| `ACCESS_TOKEN_SECRET`, `REFRESH_TOKEN_SECRET`                     | JWT signing secrets; use different values.                   |
+| `ACCESS_TOKEN_EXPIRY`, `REFRESH_TOKEN_EXPIRY`                     | e.g. `1d` and `10d`. Cookies expire with them.               |
+| `SERVER_URL`                                                      | This API's own URL, used for locally stored file links.      |
+| `CORS_ORIGIN`                                                     | Comma-separated client origins. Unset or `*` logs a warning. |
+| `FORGOT_PASSWORD_REDIRECT_URL`, `EMAIL_VERIFICATION_REDIRECT_URL` | Client routes the emailed links open.                        |
+| `CLOUDINARY_*`                                                    | All three set: uploads go to Cloudinary.                     |
+| `TRUST_PROXY`                                                     | Proxy hops to trust, so rate limiting sees real client IPs.  |
 
-## Screenshots
+## Future improvements
 
-This is a backend API project, so no application UI screenshots are available in the repository.
-
-| Screenshot          | Placeholder                                       |
-| ------------------- | ------------------------------------------------- |
-| API client example  | Add a Postman, Insomnia, or curl screenshot here. |
-| MongoDB collections | Add a database screenshot here if useful.         |
-
-## Testing / Verification
-
-`scripts/verify.mjs` is an end-to-end smoke test (Node's built-in `node:test` + `fetch`, no extra dependencies) that runs against a live `npm run dev` server and the real MongoDB database configured in `.env`. It registers two users, exercises project/task/subtask/note CRUD and RBAC (including cross-project access and the member-vs-admin subtask permission split), asserts that deleting a project leaves no orphaned rows behind, and cleans up everything it creates.
-
-It also runs on every push and pull request via `.github/workflows/ci.yml`, against a real MongoDB service container on `ubuntu-latest`. That workflow additionally imports the whole module graph on a case-sensitive filesystem, which catches import-path casing mistakes that a Windows or macOS machine cannot detect locally.
-
-```bash
-RATE_LIMIT_ENABLED=false npm run dev   # in one terminal
-npm run verify                         # in another, once the server is up
-```
-
-The flag belongs on the **server**, not on `npm run verify`. The limiter is read inside the
-request handler, so a value set in the test script's own environment has no effect on the
-process doing the limiting. This matters because the script makes a few hundred requests per
-run against a default budget of 300 per fifteen minutes, so a second run inside that window is
-throttled; `api()` turns the resulting 429 into one explanatory failure rather than a few
-hundred silent ones.
-
-### Linting
-
-Both projects lint with [oxlint](https://oxc.rs/docs/guide/usage/linter.html):
-
-```bash
-npm run lint            # src/ and scripts/
-cd frontend && npm run lint
-```
-
-oxlint rather than ESLint for one concrete reason: this project is on TypeScript
-7, and typescript-eslint refuses to load against it outright — not a peer
-warning but a thrown error, tracked in typescript-eslint#10940. Without its
-parser, ESLint cannot read a `.tsx` file at all, which rules out
-`react-hooks/rules-of-hooks` and `exhaustive-deps` — the rules actually worth
-having here. oxlint parses TypeScript itself and implements both.
-
-The trade-off is that oxlint has no type-aware rules. `tsc --noEmit` covers that
-ground and runs in the same CI job.
-
-### Backend unit tests
-
-The pieces that need neither a server nor a database run on their own:
-
-```bash
-npm run test:unit
-```
-
-The script names each test file explicitly. `node --test src/` is not an
-alternative: on Node 22 a directory argument is resolved as a module, so `src/`
-becomes `src/index.js`, which boots a real server and never exits; on Node 20 the
-same argument is treated as a directory to search. Glob arguments only work from
-Node 21 on, which is above this project's `engines` floor.
-
-### Frontend tests
-
-The client has its own Vitest suite (jsdom + Testing Library). It needs no database and no
-running API: the request layer is stubbed, so the tests assert on component behaviour rather
-than on the network.
-
-```bash
-cd frontend
-npm test          # single run
-npm run test:watch
-```
-
-Coverage is aimed at the things a typecheck cannot catch — that tasks land in the right status
-column, that a plain member is offered no task controls and no Settings tab, that an
-optimistic status change rolls back when the server refuses it, that a task with no
-attachments is sent as JSON rather than multipart, and that the reset-password route stays
-reachable for a browser that still holds a session.
-
-`src/lib/api.test.ts` covers the client's own auth machinery against a stubbed `fetch`: the 401
-retry, the single-flight refresh, and that a failed refresh clears the session. That module is
-mocked wholesale by every other test file, so nothing else exercises it — and it holds the
-subtlest logic in the client. The single-flight assertion was confirmed to fail when the
-memoisation is removed, since a test that cannot fail proves nothing.
-
-`vitest.config.ts` is deliberately separate from `vite.config.ts`: Vitest bundles its own copy
-of Vite, and a single config importing both `vitest/config` and the Vite 8 plugins types the
-plugin array against the wrong copy and fails `tsc --noEmit`.
-
-## Security Notes
-
-- **Project-scoped resource access.** Every task, subtask, and note lookup is constrained to the
-  `:projectId` in the URL, not just the child's own id. A mismatch returns **404 rather than 403**,
-  so the response cannot be used to probe whether a resource exists in another project. The same
-  now applies to the project itself: `validateProjectPermission` answered **400** for a caller who
-  was not a member, which is both the wrong class — the request is perfectly well formed — and a
-  different answer from the 404 an invented id gets, so the status alone told an attacker which
-  ids were real. `scripts/verify.mjs` asserts that the two are indistinguishable.
-- **A password change ends every session.** A reset is what someone does when they believe their
-  account is compromised, so it has to actually evict whoever else is holding it. Two things are
-  needed, because a session has two halves. `resetForgotPassword` and `changeCurrentPassword`
-  clear the stored refresh token, which stops the other party renewing; they also set
-  `credentialsChangedAt`, and `verifyJWT` refuses any access token issued before it. A JWT cannot
-  be revoked individually without a server-side denylist, but every token one user holds can be
-  revoked at once by timestamp, which is exactly the grain this needs. Without the second half an
-  access token captured before the reset kept full read **and write** access for a whole
-  `ACCESS_TOKEN_EXPIRY` — a day, on the configuration below. `isTokenStale` compares in whole
-  seconds and keeps a token minted in the same second as the change: `iat` has one-second
-  resolution, so a stricter comparison would intermittently refuse the sign-in that a reset
-  exists to enable. `scripts/verify.mjs` asserts both halves on both paths.
-- **Secrets are stripped where the field is declared.** The user schema's `toJSON` deletes the
-  password hash, the refresh token, both temporary-token pairs and `credentialsChangedAt`, so
-  every route that answers with a user is covered, including ones added later. This replaced a
-  per-query `.select("-password -refreshToken …")` denylist that had to be repeated and kept in
-  step with the model — `GET /auth/current-user` was returning `forgotPasswordToken` and
-  `forgotPasswordExpiry` because its list predated those fields. The aggregation pipelines do not
-  pass through `toJSON`, but they already `$project` an explicit allowlist.
-- **Every project keeps an admin.** `updateMemberRole` and `deleteMember` refuse a change that
-  would leave a project with no `admin`, and `addMembersToProject` cannot change a role at all —
-  it was an upsert that `$set` the role unconditionally, which made it a third write path to the
-  same field and the only one with no guard. An admin who typed their own address into "add a
-  member" demoted themselves and locked the project; one admin could demote another the same way.
-  Adding now answers 409 for someone who is already a member. This is a liveness property rather than a
-  confidentiality one, and it is unrecoverable if violated: renaming, deleting, adding a member,
-  and changing a role are all gated on `admin`, so an admin-less project cannot be repaired
-  through the API at all. Because the count and the write are separate round trips, each path
-  re-counts afterwards and undoes its own change if a concurrent demotion crossed the line --
-  a transaction would be tidier but needs a replica set, and CI runs a standalone `mongod`.
-- **Assignees must be members.** `express-validator` can only see the request body, so it can
-  check that `assignedTo` is a well-formed ObjectId and nothing more. `createTask` and
-  `updateTask` additionally resolve it against `ProjectMember`, before any attachment is
-  written -- a rejection after the upload would orphan the blobs with no row left to delete
-  them by.
-- **Local deletes cannot escape the upload directory.** Stored keys are UUIDs the server
-  generates, so nothing attacker-controlled normally reaches `fs.unlink`. `resolveLocalPath` in
-  `src/utils/storage.js` checks anyway, because the paths that bypass that are real: a row
-  written by an older version, one restored from a backup, or a database edited by hand. A key
-  of `../../src/app.js` would otherwise resolve to a live file and delete it. Covered by
-  `npm run test:unit`.
-- **Upload allowlist.** `src/middlewares/multer.middleware.js` accepts a file only when its MIME
-  type is known _and_ its extension belongs to that type, which also rejects double-extension
-  tricks like `a.txt.html`. SVG is deliberately excluded because it can carry inline `<script>`.
-  Stored filenames are random UUIDs, and everything under `public/` is served with
-  `Content-Disposition: attachment` and `X-Content-Type-Options: nosniff`.
-- **Storage driver.** Multer buffers uploads in memory and `src/utils/storage.js` decides where the
-  bytes land: Cloudinary when its three credentials are present, `public/images` otherwise. The
-  filter above runs before either driver, so a rejected file is never written anywhere. Each stored
-  attachment records the `provider` and `key` needed to delete it again — without those, removing a
-  task or project would leave its blobs orphaned in a paid account indefinitely.
-- **Account enumeration.** Login answers `401 Invalid credentials` for both an unknown address and
-  a wrong password, and forgot-password always returns the same 200. Note one residual gap: a
-  request for a nonexistent user skips bcrypt and so returns measurably faster. Closing that timing
-  side-channel would mean comparing against a dummy hash on the miss path.
-- **CORS.** `CORS_ORIGIN=*` combined with `credentials: true` lets any origin send authenticated
-  requests; the server logs a warning at startup. Set an explicit comma-separated origin list
-  before deploying.
-- **Tokens are returned in the login response body as well as in httpOnly cookies.** This is a
-  deliberate dual-client design (cookies for browsers, `Authorization: Bearer` for API and mobile
-  clients), but it does mean an XSS bug could read a token from the response. A browser-only
-  deployment should drop the body tokens.
-
-## Future Improvements
-
-- Pagination and query parameters on the list endpoints. `GET /projects` returns every project a
-  user belongs to and `GET /tasks/:projectId` returns every task in a project, in one response
-  each. That is why the board's search and assignee filter run in the browser. It is fine for a
-  handful of projects and a few dozen tasks, and wrong for a real backlog — the fix is a `limit`,
-  a cursor, and moving the filter to the server, in that order.
-- Ordering within a column. Dragging a card sets its status; where it lands in the column is
-  whatever order the fetch returned. Controlling that needs a position field on the task and an
-  endpoint to write it, and a scheme (fractional indexing, or renumbering a column at a time)
-  that does not rewrite every row on each move.
-
-## Learning Outcomes
-
-This project demonstrates how to organize an Express API with routes, controllers, middleware, validators, utilities, and Mongoose models. A developer can learn JWT-based authentication, password hashing, token-based email flows, request validation, role-oriented data modeling, and basic MongoDB relationships for a project-management backend.
-
-## Contributing
-
-Contributions are welcome.
-
-1. Fork the repository.
-2. Create a feature branch.
-3. Make a focused change with clear naming and formatting.
-4. Run the project locally with `npm run dev`.
-5. Open a pull request describing the change and any manual testing performed.
-
-Run `node scripts/verify.mjs` against a local dev server before opening a PR, and include the result in your description along with any manual verification notes.
+- **Pagination and server-side filtering.** The board filters in the browser
+  because `GET /tasks/:projectId` returns a whole project. That is right for
+  dozens of tasks and wrong for thousands; the fix is a cursor, then filters.
+- **Card order within a column.** A drop sets the status; the position within
+  the column needs a rank field (fractional indexing) and an endpoint for it.
+- **Transactions.** The last-admin guard and project cascade use compensating
+  writes; on a replica set they could become one transaction each.
 
 ## License
 
-This project is licensed under the ISC License.
+ISC
