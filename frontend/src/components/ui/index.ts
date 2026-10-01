@@ -11,6 +11,13 @@ export {
     Spinner,
     type BadgeTone,
 } from "./Feedback";
-export { Field, FileInput, InlineInput, Select, Textarea } from "./Form";
+export {
+    Field,
+    FileInput,
+    InlineInput,
+    PasswordField,
+    Select,
+    Textarea,
+} from "./Form";
 export { ConfirmButton, Dialog, Drawer, SlideOver } from "./Overlay";
 export { Tabs } from "./Tabs";

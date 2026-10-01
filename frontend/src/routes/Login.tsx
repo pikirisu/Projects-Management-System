@@ -4,7 +4,7 @@ import { useMutation } from "@tanstack/react-query";
 import { useAuth } from "../context/auth";
 import { asApiError } from "../lib/api";
 import { AuthShell } from "../components/AuthShell";
-import { Alert, Button, Field } from "../components/ui";
+import { Alert, Button, Field, PasswordField } from "../components/ui";
 
 const linkClass =
     "font-medium text-indigo-600 hover:underline dark:text-indigo-400";
@@ -71,10 +71,9 @@ export function Login() {
                 />
 
                 <div>
-                    <Field
+                    <PasswordField
                         label="Password"
                         name="password"
-                        type="password"
                         autoComplete="current-password"
                         required
                         value={password}

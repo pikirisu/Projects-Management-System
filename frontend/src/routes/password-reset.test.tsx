@@ -116,6 +116,30 @@ describe("ResetPassword", () => {
         ).toBeInTheDocument();
     });
 
+    it("shows a typed password only while asked to", async () => {
+        const user = userEvent.setup();
+        renderReset();
+
+        const input = screen.getByLabelText("New password");
+        await user.type(input, "N3wPassw0rd!");
+        expect(input).toHaveAttribute("type", "password");
+
+        // One toggle per field: this one reveals only the first.
+        const [toggle] = screen.getAllByRole("button", {
+            name: "Show password",
+        });
+        await user.click(toggle!);
+        expect(input).toHaveAttribute("type", "text");
+        expect(toggle).toHaveAttribute("aria-pressed", "true");
+        expect(screen.getByLabelText("Confirm new password")).toHaveAttribute(
+            "type",
+            "password",
+        );
+
+        await user.click(toggle!);
+        expect(input).toHaveAttribute("type", "password");
+    });
+
     it("refuses to submit a mistyped confirmation", async () => {
         const user = userEvent.setup();
         renderReset();

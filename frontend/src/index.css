@@ -51,13 +51,13 @@
 :root[data-theme="dark"] {
     color-scheme: dark;
 
-    --canvas: oklch(15.5% 0.006 265);
-    --surface: oklch(19.5% 0.007 265);
-    --sunken: oklch(23% 0.008 265);
-    --hairline: oklch(28% 0.008 265);
+    --canvas: oklch(19% 0.007 265);
+    --surface: oklch(22.5% 0.008 265);
+    --sunken: oklch(26% 0.009 265);
+    --hairline: oklch(31% 0.009 265);
     --strong: oklch(96% 0.003 265);
-    --muted: oklch(72% 0.013 265);
-    --faint: oklch(56% 0.012 265);
+    --muted: oklch(74% 0.013 265);
+    --faint: oklch(59% 0.012 265);
 
     /* On dark, depth comes from lighter surfaces; shadows only separate overlays. */
     --elev-raised: 0 1px 2px oklch(0% 0 0 / 0.3);
@@ -77,6 +77,11 @@ body {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     font-feature-settings: "cv11", "ss01";
+}
+
+/* PasswordField draws its own reveal button; Edge would add a second one. */
+input::-ms-reveal {
+    display: none;
 }
 
 /* A type scale, so a page has a visible hierarchy rather than one size. */

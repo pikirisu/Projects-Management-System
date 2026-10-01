@@ -5,7 +5,7 @@ import { useAuth } from "../context/auth";
 import { asApiError } from "../lib/api";
 import { PASSWORD_MIN_LENGTH } from "../lib/constants";
 import { AuthShell } from "../components/AuthShell";
-import { Alert, Button, Field } from "../components/ui";
+import { Alert, Button, Field, PasswordField } from "../components/ui";
 
 export function Register() {
     const { register } = useAuth();
@@ -93,10 +93,9 @@ export function Register() {
                     error={error?.fieldErrors.email}
                 />
 
-                <Field
+                <PasswordField
                     label="Password"
                     name="password"
-                    type="password"
                     autoComplete="new-password"
                     required
                     value={password}

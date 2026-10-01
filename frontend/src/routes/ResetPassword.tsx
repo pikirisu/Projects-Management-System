@@ -4,7 +4,7 @@ import { useMutation } from "@tanstack/react-query";
 import { api, asApiError } from "../lib/api";
 import { PASSWORD_MIN_LENGTH } from "../lib/constants";
 import { AuthShell } from "../components/AuthShell";
-import { Alert, Button, Field } from "../components/ui";
+import { Alert, Button, PasswordField } from "../components/ui";
 
 /** The page the reset email links to: FORGOT_PASSWORD_REDIRECT_URL/:token. */
 export function ResetPassword() {
@@ -69,10 +69,9 @@ export function ResetPassword() {
         >
             <form onSubmit={handleSubmit} className="space-y-4" noValidate>
                 {error && <Alert>{error.message}</Alert>}
-                <Field
+                <PasswordField
                     label="New password"
                     name="newPassword"
-                    type="password"
                     autoComplete="new-password"
                     required
                     autoFocus
@@ -81,10 +80,9 @@ export function ResetPassword() {
                     hint={`At least ${PASSWORD_MIN_LENGTH} characters.`}
                     error={tooShort ?? error?.fieldErrors.newPassword}
                 />
-                <Field
+                <PasswordField
                     label="Confirm new password"
                     name="confirmPassword"
-                    type="password"
                     autoComplete="new-password"
                     required
                     value={confirmation}

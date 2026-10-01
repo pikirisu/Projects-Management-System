@@ -26,6 +26,7 @@ import {
     Field,
     FileInput,
     PageHeader,
+    PasswordField,
 } from "../components/ui";
 
 /** A titled block of the settings page: what it is on the left, the form on the right. */
@@ -230,20 +231,18 @@ function ChangePasswordForm() {
     return (
         <form onSubmit={handleSubmit} className="space-y-4" noValidate>
             {error && <Alert>{error.message}</Alert>}
-            <Field
+            <PasswordField
                 label="Current password"
                 name="oldPassword"
-                type="password"
                 autoComplete="current-password"
                 required
                 value={oldPassword}
                 onChange={(event) => setOldPassword(event.target.value)}
                 error={error?.fieldErrors.oldPassword}
             />
-            <Field
+            <PasswordField
                 label="New password"
                 name="newPassword"
-                type="password"
                 autoComplete="new-password"
                 required
                 value={newPassword}
@@ -251,10 +250,9 @@ function ChangePasswordForm() {
                 hint={`At least ${PASSWORD_MIN_LENGTH} characters.`}
                 error={problem ?? error?.fieldErrors.newPassword}
             />
-            <Field
+            <PasswordField
                 label="Confirm new password"
                 name="confirmPassword"
-                type="password"
                 autoComplete="new-password"
                 required
                 value={confirmation}
