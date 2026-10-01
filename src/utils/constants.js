@@ -1,15 +1,12 @@
-export const UserRolesEnum = {
+export const ROLES = {
     ADMIN: "admin",
     PROJECT_ADMIN: "project_admin",
     MEMBER: "member",
 };
 
-export const AvailableUserRole = Object.values(UserRolesEnum);
+export const ALL_ROLES = Object.values(ROLES);
 
-export const TaskStatusEnum = {
-    TODO: "todo",
-    IN_PROGRESS: "in_progress",
-    DONE: "done",
-};
+/** Roles that may create, edit, move and delete tasks. */
+export const MANAGER_ROLES = [ROLES.ADMIN, ROLES.PROJECT_ADMIN];
 
-export const AvailableTaskStatues = Object.values(TaskStatusEnum);
+export const TASK_STATUSES = ["todo", "in_progress", "done"];

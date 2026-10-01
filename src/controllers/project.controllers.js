@@ -1,381 +1,225 @@
-import { User } from "../models/user.models.js";
+import mongoose from "mongoose";
+import { ProjectNote } from "../models/note.models.js";
 import { Project } from "../models/project.models.js";
 import { ProjectMember } from "../models/projectmember.models.js";
-import { Task } from "../models/task.models.js";
 import { Subtask } from "../models/subtask.models.js";
-import { ProjectNote } from "../models/note.models.js";
-import { ApiResponse } from "../utils/api-response.js";
-import { ApiError } from "../utils/api-error.js";
-import { asyncHandler } from "../utils/async-handler.js";
-import mongoose from "mongoose";
+import { Task } from "../models/task.models.js";
+import { User } from "../models/user.models.js";
 import { lookupUser } from "../utils/aggregations.js";
-import { AvailableUserRole, UserRolesEnum } from "../utils/constants.js";
-import { deleteAttachments } from "../utils/storage.js";
+import { ApiError } from "../utils/api-error.js";
+import { respond } from "../utils/api-response.js";
+import { ROLES } from "../utils/constants.js";
+import { deleteStoredFiles } from "../utils/storage.js";
 
-const getProjects = asyncHandler(async (req, res) => {
+// ---- projects ----------------------------------------------------------------
+
+/**
+ * Every project the caller belongs to, with their role on it and its member
+ * count. One round trip: the count is a $lookup sub-pipeline rather than
+ * loading every membership row.
+ */
+export async function getProjects(req, res) {
     const projects = await ProjectMember.aggregate([
-        {
-            $match: {
-                user: new mongoose.Types.ObjectId(req.user._id),
-            },
-        },
+        { $match: { user: req.user._id } },
         {
             $lookup: {
                 from: "projects",
                 localField: "project",
                 foreignField: "_id",
                 as: "project",
-                pipeline: [
-                    {
-                        $lookup: {
-                            from: "projectmembers",
-                            localField: "_id",
-                            foreignField: "project",
-                            as: "projectmembers",
-                        },
-                    },
-                    {
-                        $addFields: {
-                            members: {
-                                $size: "$projectmembers",
-                            },
-                        },
-                    },
-                ],
             },
         },
+        { $unwind: "$project" },
         {
-            $unwind: "$project",
+            $lookup: {
+                from: "projectmembers",
+                localField: "project._id",
+                foreignField: "project",
+                as: "memberCount",
+                pipeline: [{ $count: "n" }],
+            },
         },
         {
             $project: {
-                project: {
-                    _id: 1,
-                    name: 1,
-                    description: 1,
-                    members: 1,
-                    createdAt: 1,
-                    createdBy: 1,
-                },
-                role: 1,
                 _id: 0,
+                role: 1,
+                project: {
+                    _id: "$project._id",
+                    name: "$project.name",
+                    description: "$project.description",
+                    createdBy: "$project.createdBy",
+                    createdAt: "$project.createdAt",
+                    members: { $ifNull: [{ $first: "$memberCount.n" }, 0] },
+                },
             },
         },
+        { $sort: { "project.createdAt": -1 } },
     ]);
 
-    return res
-        .status(200)
-        .json(new ApiResponse(200, projects, "Projects fetched successfully"));
-});
+    return respond(res, projects, "Projects fetched");
+}
 
-const getProjectById = asyncHandler(async (req, res) => {
-    const { projectId } = req.params;
-    const project = await Project.findById(projectId);
+export async function getProjectById(req, res) {
+    const project = await Project.findById(req.params.projectId);
+    if (!project) throw new ApiError(404, "Project not found");
+    return respond(res, project, "Project fetched");
+}
 
-    if (!project) {
-        throw new ApiError(404, "Project not found");
-    }
-
-    return res
-        .status(200)
-        .json(new ApiResponse(200, project, "Project fetched successfully"));
-});
-
-const createProject = asyncHandler(async (req, res) => {
+export async function createProject(req, res) {
     const { name, description } = req.body;
-
     const project = await Project.create({
         name,
         description,
-        createdBy: new mongoose.Types.ObjectId(req.user._id),
+        createdBy: req.user._id,
     });
-
     await ProjectMember.create({
-        user: new mongoose.Types.ObjectId(req.user._id),
-        project: new mongoose.Types.ObjectId(project._id),
-        role: UserRolesEnum.ADMIN,
+        user: req.user._id,
+        project: project._id,
+        role: ROLES.ADMIN,
     });
+    return respond(res, project, "Project created", 201);
+}
 
-    return res
-        .status(201)
-        .json(new ApiResponse(201, project, "Project created Successfully"));
-});
-
-const updateProject = asyncHandler(async (req, res) => {
+export async function updateProject(req, res) {
     const { name, description } = req.body;
-    const { projectId } = req.params;
-
     const project = await Project.findByIdAndUpdate(
-        projectId,
-        {
-            name,
-            description,
-        },
-        { new: true },
+        req.params.projectId,
+        { name, description },
+        { returnDocument: "after" },
     );
+    if (!project) throw new ApiError(404, "Project not found");
+    return respond(res, project, "Project updated");
+}
 
-    if (!project) {
-        throw new ApiError(404, "Project not found");
-    }
-    return res
-        .status(200)
-        .json(new ApiResponse(200, project, "Project updated successfully"));
-});
-
-const deleteProject = asyncHandler(async (req, res) => {
+// Decision: MongoDB has no foreign keys, so the cascade is explicit. Stored
+// files go last and best-effort: the rows are the source of truth, and a
+// storage outage must not stop someone deleting their own project.
+export async function deleteProject(req, res) {
     const { projectId } = req.params;
-
     const project = await Project.findByIdAndDelete(projectId);
-    if (!project) {
-        throw new ApiError(404, "Project not found");
-    }
+    if (!project) throw new ApiError(404, "Project not found");
 
-    // Everything below hangs off the project by reference, and MongoDB has no
-    // foreign keys to cascade for us. Deleting only the Project row left
-    // members, tasks, subtasks and notes stranded in their collections --
-    // invisible to the API but still occupying the database, and in the case of
-    // attachments, still billable storage.
-    //
-    // Subtasks reference their parent Task rather than the project, so their
-    // ids have to be resolved before the tasks are removed.
-    const tasks = await Task.find({ project: projectId }).select(
-        "_id attachments",
-    );
-    const taskIds = tasks.map((task) => task._id);
-
+    // Subtasks reference their task, not the project, so resolve those first.
+    const tasks = await Task.find({ project: projectId }).select("attachments");
     await Promise.all([
         ProjectMember.deleteMany({ project: projectId }),
         ProjectNote.deleteMany({ project: projectId }),
-        Subtask.deleteMany({ task: { $in: taskIds } }),
+        Subtask.deleteMany({ task: { $in: tasks.map((task) => task._id) } }),
         Task.deleteMany({ project: projectId }),
     ]);
+    await deleteStoredFiles(tasks.flatMap((task) => task.attachments));
 
-    await deleteAttachments(tasks.flatMap((task) => task.attachments ?? []));
+    return respond(res, project, "Project deleted");
+}
 
-    return res
-        .status(200)
-        .json(new ApiResponse(200, project, "Project deleted successfully"));
-});
+// ---- members -----------------------------------------------------------------
 
-const addMembersToProject = asyncHandler(async (req, res) => {
-    const { email, role } = req.body;
-    const { projectId } = req.params;
-    const user = await User.findOne({ email });
-
-    if (!user) {
-        throw new ApiError(404, "No account exists with that email address");
-    }
-
-    /*
-     * Adding only ever adds. This used to be an upsert that $set the role
-     * unconditionally, which made it a third way to write a role -- and the
-     * only one with no last-admin guard on it. An admin who typed their own
-     * address here demoted themselves to member, and since every management
-     * route is gated on admin, the project became permanently unmanageable:
-     * nobody could rename it, add anyone, change a role, or delete it. The
-     * same move also let one admin quietly demote another, bypassing the
-     * check in updateMemberRole entirely.
-     */
-    const existing = await ProjectMember.findOne({
-        user: user._id,
-        project: new mongoose.Types.ObjectId(projectId),
-    }).select("_id");
-
-    if (existing) {
-        throw new ApiError(
-            409,
-            "That person is already a member of this project. Change their role instead.",
-        );
-    }
-
-    // The unique index on { project, user } closes the gap between the check
-    // above and this write: a concurrent double-add fails with E11000, which
-    // the central error handler already answers as a 409.
-    await ProjectMember.create({
-        user: user._id,
-        project: new mongoose.Types.ObjectId(projectId),
-        role,
-    });
-
-    return res
-        .status(201)
-        .json(new ApiResponse(201, {}, "Project member added successfully"));
-});
-
-const getProjectMembers = asyncHandler(async (req, res) => {
-    const { projectId } = req.params;
-    const project = await Project.findById(projectId);
-
-    if (!project) {
-        throw new ApiError(404, "Project not found");
-    }
-
-    const projectMembers = await ProjectMember.aggregate([
+export async function getProjectMembers(req, res) {
+    const members = await ProjectMember.aggregate([
         {
             $match: {
-                project: new mongoose.Types.ObjectId(projectId),
+                project: new mongoose.Types.ObjectId(req.params.projectId),
             },
         },
-
-        lookupUser("user"),
-        {
-            $addFields: {
-                user: {
-                    $arrayElemAt: ["$user", 0],
-                },
-            },
-        },
+        ...lookupUser("user"),
         {
             $project: {
+                _id: 0,
                 project: 1,
                 user: 1,
                 role: 1,
                 createdAt: 1,
                 updatedAt: 1,
-                _id: 0,
             },
         },
+        { $sort: { createdAt: 1 } },
     ]);
+    return respond(res, members, "Members fetched");
+}
 
-    return res
-        .status(200)
-        .json(new ApiResponse(200, projectMembers, "Project members fetched"));
-});
+export async function addMemberToProject(req, res) {
+    const { email, role } = req.body;
+    const user = await User.findOne({ email });
+    if (!user) {
+        throw new ApiError(404, "No account exists with that email address");
+    }
 
-/*
- * A project with no admin is unrecoverable. Renaming it, deleting it, adding a
- * member and changing a role are all gated on the admin role, so once the last
- * admin is gone nobody left can repair it -- the rows simply sit in the
- * database, still paying for their attachment blobs. Both the demote path and
- * the remove path have to hold this line, and an admin acting on someone else
- * is as capable of crossing it as one acting on themselves.
- */
-const countAdmins = (projectId) =>
-    ProjectMember.countDocuments({
-        project: new mongoose.Types.ObjectId(projectId),
-        role: UserRolesEnum.ADMIN,
+    // Decision: adding only ever inserts. The unique { project, user } index
+    // refuses an existing member atomically, so this route can never rewrite
+    // (and so never demote) a role; only updateMemberRole changes one.
+    try {
+        await ProjectMember.create({
+            user: user._id,
+            project: req.params.projectId,
+            role,
+        });
+    } catch (error) {
+        if (error.code === 11000) {
+            throw new ApiError(
+                409,
+                "That person is already a member of this project. Change their role instead.",
+            );
+        }
+        throw error;
+    }
+
+    return respond(res, {}, "Member added", 201);
+}
+
+// Decision: a project with no admin can never be repaired, because every
+// management route requires one. Role changes and removals write first, then
+// re-count admins and undo their own write if the count reached zero. Without
+// a transaction (which needs a replica set), this is what stops two admins who
+// demote each other at the same moment from both succeeding.
+async function keepAnAdmin(projectId, undo) {
+    const admins = await ProjectMember.countDocuments({
+        project: projectId,
+        role: ROLES.ADMIN,
     });
+    if (admins === 0) {
+        await undo();
+        throw new ApiError(
+            409,
+            "A project must keep at least one admin. Promote another member first.",
+        );
+    }
+}
 
-const LAST_ADMIN_MESSAGE =
-    "A project must keep at least one admin. Promote another member first.";
-
-const updateMemberRole = asyncHandler(async (req, res) => {
+export async function updateMemberRole(req, res) {
     const { projectId, userId } = req.params;
     const { newRole } = req.body;
 
-    if (!AvailableUserRole.includes(newRole)) {
-        throw new ApiError(400, "Invalid Role");
-    }
-
-    let projectMember = await ProjectMember.findOne({
-        project: new mongoose.Types.ObjectId(projectId),
-        user: new mongoose.Types.ObjectId(userId),
-    });
-
-    if (!projectMember) {
-        throw new ApiError(400, "Project member not found");
-    }
-
-    const demotingAnAdmin =
-        projectMember.role === UserRolesEnum.ADMIN &&
-        newRole !== UserRolesEnum.ADMIN;
-
-    if (demotingAnAdmin && (await countAdmins(projectId)) <= 1) {
-        throw new ApiError(409, LAST_ADMIN_MESSAGE);
-    }
-
-    projectMember = await ProjectMember.findByIdAndUpdate(
-        projectMember._id,
-        {
-            role: newRole,
-        },
-        { new: true },
+    // Returns the row as it was before the update.
+    const member = await ProjectMember.findOneAndUpdate(
+        { project: projectId, user: userId },
+        { role: newRole },
     );
+    if (!member) throw new ApiError(404, "Project member not found");
 
-    if (!projectMember) {
-        throw new ApiError(400, "Project member not found");
-    }
-
-    /*
-     * The count above and the write below are two round trips, so two admins
-     * demoting each other at the same moment can both pass the check. Re-count
-     * afterwards and undo if the invariant actually broke: in that race both
-     * writers restore their own row and both report a conflict, which leaves
-     * the project exactly as it started. A transaction would be tidier, but it
-     * would require a replica set, and CI runs a standalone mongod.
-     */
-    if (demotingAnAdmin && (await countAdmins(projectId)) === 0) {
-        await ProjectMember.findByIdAndUpdate(projectMember._id, {
-            role: UserRolesEnum.ADMIN,
-        });
-        throw new ApiError(409, LAST_ADMIN_MESSAGE);
-    }
-
-    return res
-        .status(200)
-        .json(
-            new ApiResponse(
-                200,
-                projectMember,
-                "Project member role updated successfully",
-            ),
+    if (member.role === ROLES.ADMIN && newRole !== ROLES.ADMIN) {
+        await keepAnAdmin(projectId, () =>
+            ProjectMember.updateOne({ _id: member._id }, { role: ROLES.ADMIN }),
         );
-});
+    }
 
-const deleteMember = asyncHandler(async (req, res) => {
+    member.role = newRole;
+    return respond(res, member, "Member role updated");
+}
+
+export async function deleteMember(req, res) {
     const { projectId, userId } = req.params;
 
-    let projectMember = await ProjectMember.findOne({
-        project: new mongoose.Types.ObjectId(projectId),
-        user: new mongoose.Types.ObjectId(userId),
+    const member = await ProjectMember.findOneAndDelete({
+        project: projectId,
+        user: userId,
     });
+    if (!member) throw new ApiError(404, "Project member not found");
 
-    if (!projectMember) {
-        throw new ApiError(400, "Project member not found");
-    }
-
-    const removingAnAdmin = projectMember.role === UserRolesEnum.ADMIN;
-
-    if (removingAnAdmin && (await countAdmins(projectId)) <= 1) {
-        throw new ApiError(409, LAST_ADMIN_MESSAGE);
-    }
-
-    projectMember = await ProjectMember.findByIdAndDelete(projectMember._id);
-
-    if (!projectMember) {
-        throw new ApiError(400, "Project member not found");
-    }
-
-    // Same race as updateMemberRole, same compensating write: put the
-    // membership back rather than leave the project with nobody in charge.
-    if (removingAnAdmin && (await countAdmins(projectId)) === 0) {
-        await ProjectMember.create({
-            user: projectMember.user,
-            project: projectMember.project,
-            role: projectMember.role,
-        });
-        throw new ApiError(409, LAST_ADMIN_MESSAGE);
-    }
-
-    return res
-        .status(200)
-        .json(
-            new ApiResponse(
-                200,
-                projectMember,
-                "Project member deleted successfully",
-            ),
+    if (member.role === ROLES.ADMIN) {
+        await keepAnAdmin(projectId, () =>
+            ProjectMember.create(member.toObject()),
         );
-});
+    }
 
-export {
-    addMembersToProject,
-    createProject,
-    deleteMember,
-    getProjects,
-    getProjectById,
-    getProjectMembers,
-    updateProject,
-    deleteProject,
-    updateMemberRole,
-};
+    return respond(res, member, "Member removed");
+}

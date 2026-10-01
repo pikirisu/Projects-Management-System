@@ -1,20 +1,17 @@
 {
     "name": "backend_one",
     "version": "1.0.0",
-    "description": "Project on managing projects on a single platform",
+    "description": "Project Camp: a project-management API with per-project role-based access control",
     "main": "src/index.js",
-    "directories": {
-        "test": "test"
-    },
     "type": "module",
     "engines": {
         "node": ">=20"
     },
     "scripts": {
-        "dev": "nodemon src/index.js",
+        "dev": "node --watch src/index.js",
         "start": "node src/index.js",
-        "test": "node scripts/verify.mjs",
-        "test:unit": "node --test src/utils/verification-link.test.js src/utils/storage.test.js src/utils/token-freshness.test.js",
+        "test": "npm run test:unit",
+        "test:unit": "node --test src/utils/tokens.test.js src/utils/storage.test.js src/utils/verification-link.test.js src/middlewares/error.middleware.test.js",
         "verify": "node scripts/verify.mjs",
         "seed": "node scripts/seed-demo.mjs",
         "lint": "oxlint --deny-warnings src scripts",
@@ -46,7 +43,6 @@
         "mailgen": "^2.0.34",
         "mongoose": "^9.7.2",
         "multer": "^2.2.0",
-        "nodemailer": "^9.0.1",
-        "nodemon": "^3.1.14"
+        "nodemailer": "^9.0.1"
     }
 }

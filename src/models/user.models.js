@@ -1,26 +1,12 @@
 import mongoose, { Schema } from "mongoose";
-import brcypt from "bcrypt";
+import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import crypto from "crypto";
+import { storedFileSchema } from "./stored-file.schema.js";
 
-/*
- * Two layers keep secrets out of a response, and they guard different things.
- *
- * `select: false` on the fields below means a query does not load them at all
- * unless it asks: `.select("+password")`. That is the layer that matters,
- * because a field nobody loaded cannot be leaked by any code path, including
- * ones written later. Only three places need one -- signing in, changing a
- * password, and comparing a refresh token -- and each says so at the call site.
- *
- * The toJSON transform below is the backstop for anything that *is* loaded
- * deliberately and then serialized by accident.
- *
- * Both replaced a `.select("-password -refreshToken ...")` denylist repeated
- * at four call sites. A denylist has to be updated every time the schema
- * grows, and this one was not: GET /auth/current-user returned
- * forgotPasswordToken and forgotPasswordExpiry for as long as those fields
- * existed, because its list predated them.
- */
+// Decision: secrets are opt-in. Every field marked `select: false` is left out
+// of every query unless that query asks for it (`.select("+password")`), so no
+// code path, including ones written later, can leak what it never loaded. The
+// toJSON transform below is the backstop for anything loaded on purpose.
 const PRIVATE_FIELDS = [
     "password",
     "refreshToken",
@@ -31,55 +17,18 @@ const PRIVATE_FIELDS = [
     "credentialsChangedAt",
 ];
 
-const stripPrivateFields = (_doc, ret) => {
-    for (const field of PRIVATE_FIELDS) {
-        delete ret[field];
-    }
-
-    /*
-     * The avatar carries provider/key/resourceType so the old image can be
-     * deleted when a new one replaces it. None of that is a secret -- both are
-     * recoverable from the URL -- but it is storage bookkeeping, and sending it
-     * invites a client to depend on where the bytes happen to live. The
-     * contract is the URL.
-     */
-    if (ret.avatar) {
-        ret.avatar = { url: ret.avatar.url };
-    }
-
-    return ret;
-};
+// A real bcrypt hash of random bytes; see findByCredentials.
+const DUMMY_HASH =
+    "$2b$10$RGqlQV9eP.eNxm.OiYFdG.MFgbAVLplxB4uWVAGBB9aPLqa1AmGwa";
 
 const userSchema = new Schema(
     {
-        /*
-         * provider/key/resourceType are what make the old image deletable when
-         * a new one is uploaded -- the same trio a task attachment carries. The
-         * default has none of them, which is how the placeholder is recognised
-         * as having no stored blob behind it.
-         *
-         * `localPath` used to sit here. Nothing ever wrote or read it.
-         */
-        avatar: {
-            type: {
-                url: String,
-                provider: String,
-                key: String,
-                resourceType: String,
-                // Which local directory holds it; see src/utils/storage.js.
-                folder: String,
-            },
-            default: {
-                url: `https://placehold.co/200x200`,
-            },
-        },
         username: {
             type: String,
             required: true,
             unique: true,
             lowercase: true,
             trim: true,
-            index: true,
         },
         email: {
             type: String,
@@ -88,106 +37,75 @@ const userSchema = new Schema(
             lowercase: true,
             trim: true,
         },
-        fullName: {
-            type: String,
-            trim: true,
-        },
-        password: {
-            type: String,
-            select: false,
-            required: [true, "Password is required"],
-        },
-        isEmailVerified: {
-            type: Boolean,
-            default: false,
-        },
-        refreshToken: {
-            type: String,
-            select: false,
-        },
-        /*
-         * When this account's sessions were last invalidated. Access tokens
-         * are stateless, so nothing else can evict one before it expires;
-         * any token issued before this instant is refused. Unset on accounts
-         * that have never changed a password.
-         */
-        credentialsChangedAt: {
-            type: Date,
-        },
-        forgotPasswordToken: {
-            type: String,
-            select: false,
-        },
-        forgotPasswordExpiry: {
-            type: Date,
-            select: false,
-        },
-        emailVerificationToken: {
-            type: String,
-            select: false,
-        },
-        emailVerificationExpiry: {
-            type: Date,
-            select: false,
-        },
+        fullName: { type: String, trim: true },
+        avatar: storedFileSchema,
+        password: { type: String, required: true, select: false },
+        isEmailVerified: { type: Boolean, default: false },
+        refreshToken: { type: String, select: false },
+        // Access tokens issued before this instant are refused (isTokenStale).
+        credentialsChangedAt: Date,
+        forgotPasswordToken: { type: String, select: false },
+        forgotPasswordExpiry: { type: Date, select: false },
+        emailVerificationToken: { type: String, select: false },
+        emailVerificationExpiry: { type: Date, select: false },
     },
     {
         timestamps: true,
-        /*
-         * res.json() is JSON.stringify(), which calls toJSON() on every nested
-         * document -- so this covers each route that answers with a user, and
-         * any added later. The aggregation pipelines do not pass through here,
-         * but they already $project an explicit allowlist of public fields.
-         *
-         * toObject is deliberately left alone: server-side code reads
-         * this.password to compare a hash, and that has to keep working.
-         */
-        toJSON: { transform: stripPrivateFields },
+        toJSON: {
+            transform(_doc, ret) {
+                for (const field of PRIVATE_FIELDS) delete ret[field];
+                // Where an avatar is stored is the server's business; the
+                // contract with clients is the URL.
+                if (ret.avatar) ret.avatar = { url: ret.avatar.url };
+                return ret;
+            },
+        },
     },
 );
 
 userSchema.pre("save", async function () {
-    if (!this.isModified("password")) return;
-
-    this.password = await brcypt.hash(this.password, 10);
+    if (this.isModified("password")) {
+        this.password = await bcrypt.hash(this.password, 10);
+    }
 });
 
-userSchema.methods.isPasswordCorrect = async function (password) {
-    return await brcypt.compare(password, this.password);
+// Decision: an unknown email and a wrong password are indistinguishable, in the
+// response and in timing. A missing user still pays for one bcrypt compare, so
+// response time cannot reveal which addresses have accounts.
+userSchema.statics.findByCredentials = async function (email, password) {
+    const user = await this.findOne({ email }).select("+password");
+    const matches = await bcrypt.compare(
+        password,
+        user?.password ?? DUMMY_HASH,
+    );
+    return user && matches ? user : null;
+};
+
+userSchema.methods.isPasswordCorrect = function (password) {
+    return bcrypt.compare(password, this.password);
+};
+
+// Decision: changing a password ends every session. Clearing the stored refresh
+// token stops renewal; stamping credentialsChangedAt makes verifyJWT refuse the
+// access tokens already issued, including one in an attacker's hands.
+userSchema.methods.setPassword = function (password) {
+    this.password = password;
+    this.refreshToken = undefined;
+    this.credentialsChangedAt = new Date();
 };
 
 userSchema.methods.generateAccessToken = function () {
     return jwt.sign(
-        {
-            _id: this._id,
-            email: this.email,
-            username: this.username,
-        },
+        { _id: this._id, email: this.email, username: this.username },
         process.env.ACCESS_TOKEN_SECRET,
         { expiresIn: process.env.ACCESS_TOKEN_EXPIRY },
     );
 };
 
 userSchema.methods.generateRefreshToken = function () {
-    return jwt.sign(
-        {
-            _id: this._id,
-        },
-        process.env.REFRESH_TOKEN_SECRET,
-        { expiresIn: process.env.REFRESH_TOKEN_EXPIRY },
-    );
-};
-
-userSchema.methods.generateTemporaryToken = function () {
-    const unHashedToken = crypto.randomBytes(20).toString("hex");
-
-    const hashedToken = crypto
-        .createHash("sha256")
-        .update(unHashedToken)
-        .digest("hex");
-
-    const tokenExpiry = Date.now() + 20 * 60 * 1000; //20 mins
-    return { unHashedToken, hashedToken, tokenExpiry };
+    return jwt.sign({ _id: this._id }, process.env.REFRESH_TOKEN_SECRET, {
+        expiresIn: process.env.REFRESH_TOKEN_EXPIRY,
+    });
 };
 
 export const User = mongoose.model("User", userSchema);

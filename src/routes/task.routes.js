@@ -1,82 +1,59 @@
 import { Router } from "express";
 import {
-    getTasks,
+    createSubTask,
     createTask,
-    getTaskById,
-    updateTask,
+    deleteSubTask,
     deleteTask,
     deleteTaskAttachment,
-    createSubTask,
+    getTaskById,
+    getTasks,
     updateSubTask,
-    deleteSubTask,
+    updateTask,
 } from "../controllers/task.controllers.js";
-import { validate } from "../middlewares/validator.middleware.js";
 import {
-    taskCreateValidator,
-    taskUpdateValidator,
-    subTaskCreateValidator,
-    subTaskUpdateValidator,
-} from "../validators/index.js";
-import {
+    anyMember,
+    managersOnly,
     verifyJWT,
-    validateProjectPermission,
 } from "../middlewares/auth.middleware.js";
+import { uploadAttachments } from "../middlewares/multer.middleware.js";
 import {
-    ATTACHMENT_FIELD,
-    MAX_ATTACHMENTS,
-    upload,
-} from "../middlewares/multer.middleware.js";
-import { AvailableUserRole, UserRolesEnum } from "../utils/constants.js";
+    createSubtaskRules,
+    createTaskRules,
+    updateSubtaskRules,
+    updateTaskRules,
+} from "../validators/index.js";
 
 const router = Router();
 router.use(verifyJWT);
 
-const PROJECT_MANAGERS = [UserRolesEnum.ADMIN, UserRolesEnum.PROJECT_ADMIN];
-
 router
     .route("/:projectId")
-    .get(validateProjectPermission(AvailableUserRole), getTasks)
-    .post(
-        validateProjectPermission(PROJECT_MANAGERS),
-        upload.array(ATTACHMENT_FIELD, MAX_ATTACHMENTS),
-        taskCreateValidator(),
-        validate,
-        createTask,
-    );
+    .get(anyMember, getTasks)
+    .post(managersOnly, uploadAttachments, createTaskRules, createTask);
 
 router
     .route("/:projectId/t/:taskId")
-    .get(validateProjectPermission(AvailableUserRole), getTaskById)
-    .put(
-        validateProjectPermission(PROJECT_MANAGERS),
-        upload.array(ATTACHMENT_FIELD, MAX_ATTACHMENTS),
-        taskUpdateValidator(),
-        validate,
-        updateTask,
-    )
-    .delete(validateProjectPermission(PROJECT_MANAGERS), deleteTask);
+    .get(anyMember, getTaskById)
+    .put(managersOnly, uploadAttachments, updateTaskRules, updateTask)
+    .delete(managersOnly, deleteTask);
 
-router
-    .route("/:projectId/t/:taskId/attachments/:attachmentId")
-    .delete(validateProjectPermission(PROJECT_MANAGERS), deleteTaskAttachment);
+router.delete(
+    "/:projectId/t/:taskId/attachments/:attachmentId",
+    managersOnly,
+    deleteTaskAttachment,
+);
 
-router
-    .route("/:projectId/t/:taskId/subtasks")
-    .post(
-        validateProjectPermission(PROJECT_MANAGERS),
-        subTaskCreateValidator(),
-        validate,
-        createSubTask,
-    );
+router.post(
+    "/:projectId/t/:taskId/subtasks",
+    managersOnly,
+    createSubtaskRules,
+    createSubTask,
+);
 
+// Any member may tick a subtask off; updateSubTask keeps renaming to managers.
 router
     .route("/:projectId/st/:subTaskId")
-    .put(
-        validateProjectPermission(AvailableUserRole),
-        subTaskUpdateValidator(),
-        validate,
-        updateSubTask,
-    )
-    .delete(validateProjectPermission(PROJECT_MANAGERS), deleteSubTask);
+    .put(anyMember, updateSubtaskRules, updateSubTask)
+    .delete(managersOnly, deleteSubTask);
 
 export default router;

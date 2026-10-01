@@ -1,20 +1,23 @@
 import { body } from "express-validator";
-import { AvailableUserRole, AvailableTaskStatues } from "../utils/constants.js";
+import { validate } from "../middlewares/validator.middleware.js";
+import { ALL_ROLES, TASK_STATUSES } from "../utils/constants.js";
 
-/*
- * Passwords are neither trimmed nor coerced.
- *
- * Trimming silently stores something other than what the user typed.
- * Registration used to trim while login did not, so anyone whose password
- * ended in a space -- a paste, or a generated one -- created an account they
- * could not sign in to, and was told only "Invalid credentials".
- *
- * isString is for a different failure: express-validator stringifies before
- * notEmpty(), so `{"$ne": null}` passed validation and reached bcrypt.compare,
- * which throws on a non-string. That answered 500 on an unauthenticated route.
- * bail() stops there, so an object is not also reported as empty.
- */
-const passwordField = (field, label) =>
+/** A rule set ends with `validate`, so a route lists it as one middleware. */
+const rules = (...chains) => [...chains, validate];
+
+const email = () =>
+    body("email")
+        .trim()
+        .notEmpty()
+        .withMessage("Email is required")
+        .bail()
+        .isEmail()
+        .withMessage("Email is invalid");
+
+// Decision: passwords are never trimmed, since that would store something other
+// than what was typed, and must be strings: `{"$ne": null}` would otherwise
+// reach bcrypt.compare, which throws, and answer 500 on a public route.
+const password = (field, label = "Password") =>
     body(field)
         .isString()
         .withMessage(`${label} must be text`)
@@ -22,174 +25,100 @@ const passwordField = (field, label) =>
         .notEmpty()
         .withMessage(`${label} is required`);
 
-const userRegisterValidator = () => {
-    return [
-        body("email")
-            .trim()
-            .notEmpty()
-            .withMessage("Email is required")
-            .isEmail()
-            .withMessage("Email is invalid"),
-        body("username")
-            .trim()
-            .notEmpty()
-            .withMessage("Username is required")
-            .isLowercase()
-            .withMessage("Username must be in lower case")
-            .isLength({ min: 3 })
-            .withMessage("Username must be at least 3 characters long"),
-        passwordField("password", "Password"),
-        body("fullName").optional().trim(),
-    ];
-};
+const title = ({ optional }) =>
+    optional
+        ? body("title")
+              .optional()
+              .trim()
+              .notEmpty()
+              .withMessage("Title cannot be empty")
+        : body("title").trim().notEmpty().withMessage("Title is required");
 
-const userLoginValidator = () => {
-    return [
-        body("email")
-            .trim()
-            .notEmpty()
-            .withMessage("Email is required")
-            .isEmail()
-            .withMessage("Email is invalid"),
-        passwordField("password", "Password"),
-    ];
-};
+// ---- auth -------------------------------------------------------------------
 
-const userChangeCurrentPasswordValidator = () => {
-    return [
-        passwordField("oldPassword", "Old password"),
-        passwordField("newPassword", "New password"),
-    ];
-};
+export const registerRules = rules(
+    email(),
+    body("username")
+        .trim()
+        .notEmpty()
+        .withMessage("Username is required")
+        .bail()
+        .isLowercase()
+        .withMessage("Username must be lowercase")
+        .isLength({ min: 3 })
+        .withMessage("Username must be at least 3 characters"),
+    password("password"),
+    body("fullName").optional().trim(),
+);
 
-const userUpdateProfileValidator = () => {
-    return [
-        body("fullName")
-            .trim()
-            .notEmpty()
-            .withMessage("Name is required")
-            .isLength({ max: 80 })
-            .withMessage("Name must be 80 characters or fewer"),
-    ];
-};
+export const loginRules = rules(email(), password("password"));
 
-const userForgotPasswordValidator = () => {
-    return [
-        body("email")
-            .notEmpty()
-            .withMessage("Email is required")
-            .isEmail()
-            .withMessage("Email is invalid"),
-    ];
-};
+export const forgotPasswordRules = rules(email());
 
-const userResetForgotPasswordValidator = () => {
-    return [passwordField("newPassword", "Password")];
-};
+export const resetPasswordRules = rules(password("newPassword"));
 
-const createProjectValidator = () => {
-    return [
-        // Trimmed like every other name field. Without it a name of spaces
-        // reached Mongoose's own required check, and the client was handed
-        // "Project validation failed: name: Path `name` is required."
-        body("name").trim().notEmpty().withMessage("Name is required"),
+export const changePasswordRules = rules(
+    password("oldPassword", "Current password"),
+    password("newPassword", "New password"),
+);
+
+export const profileRules = rules(
+    body("fullName")
+        .trim()
+        .notEmpty()
+        .withMessage("Name is required")
+        .isLength({ max: 80 })
+        .withMessage("Name must be 80 characters or fewer"),
+);
+
+// ---- projects ----------------------------------------------------------------
+
+export const projectRules = rules(
+    body("name").trim().notEmpty().withMessage("Name is required"),
+    body("description").optional().trim(),
+);
+
+export const addMemberRules = rules(
+    email(),
+    body("role").isIn(ALL_ROLES).withMessage("Role is invalid"),
+);
+
+export const memberRoleRules = rules(
+    body("newRole").isIn(ALL_ROLES).withMessage("Role is invalid"),
+);
+
+// ---- tasks -------------------------------------------------------------------
+
+/** Create requires a title; update makes every field optional. */
+const taskRules = ({ optional }) =>
+    rules(
+        title({ optional }),
         body("description").optional().trim(),
-    ];
-};
-
-const addMembertoProjectValidator = () => {
-    return [
-        body("email")
-            .trim()
-            .notEmpty()
-            .withMessage("Email is required")
-            .isEmail()
-            .withMessage("Email is invalid"),
-        body("role")
-            .notEmpty()
-            .withMessage("Role is required")
-            .isIn(AvailableUserRole)
-            .withMessage("Role is invalid"),
-    ];
-};
-
-const taskCreateValidator = () => {
-    return [
-        body("title").trim().notEmpty().withMessage("Title is required"),
-        body("description").optional().trim(),
+        body("status")
+            .optional()
+            .isIn(TASK_STATUSES)
+            .withMessage("Status is invalid"),
         body("assignedTo")
             .optional()
             .isMongoId()
-            .withMessage("Assigned user id is invalid"),
-        body("status")
-            .optional()
-            .isIn(AvailableTaskStatues)
-            .withMessage("Status is invalid"),
-    ];
-};
+            .withMessage("Assignee is invalid"),
+    );
 
-const taskUpdateValidator = () => {
-    return [
-        body("title")
-            .optional()
-            .trim()
-            .notEmpty()
-            .withMessage("Title cannot be empty"),
-        body("description").optional().trim(),
-        body("assignedTo")
-            .optional()
-            .isMongoId()
-            .withMessage("Assigned user id is invalid"),
-        body("status")
-            .optional()
-            .isIn(AvailableTaskStatues)
-            .withMessage("Status is invalid"),
-    ];
-};
+export const createTaskRules = taskRules({ optional: false });
+export const updateTaskRules = taskRules({ optional: true });
 
-const subTaskCreateValidator = () => {
-    return [body("title").trim().notEmpty().withMessage("Title is required")];
-};
+export const createSubtaskRules = rules(title({ optional: false }));
 
-const subTaskUpdateValidator = () => {
-    return [
-        body("title")
-            .optional()
-            .trim()
-            .notEmpty()
-            .withMessage("Title cannot be empty"),
-        body("isCompleted")
-            .optional()
-            .isBoolean()
-            .withMessage("isCompleted must be a boolean"),
-    ];
-};
+export const updateSubtaskRules = rules(
+    title({ optional: true }),
+    body("isCompleted")
+        .optional()
+        .isBoolean()
+        .withMessage("isCompleted must be true or false"),
+);
 
-const noteCreateValidator = () => {
-    return [
-        body("content").trim().notEmpty().withMessage("Content is required"),
-    ];
-};
+// ---- notes -------------------------------------------------------------------
 
-const noteUpdateValidator = () => {
-    return [
-        body("content").trim().notEmpty().withMessage("Content is required"),
-    ];
-};
-
-export {
-    userRegisterValidator,
-    userLoginValidator,
-    userChangeCurrentPasswordValidator,
-    userUpdateProfileValidator,
-    userForgotPasswordValidator,
-    userResetForgotPasswordValidator,
-    createProjectValidator,
-    addMembertoProjectValidator,
-    taskCreateValidator,
-    taskUpdateValidator,
-    subTaskCreateValidator,
-    subTaskUpdateValidator,
-    noteCreateValidator,
-    noteUpdateValidator,
-};
+export const noteRules = rules(
+    body("content").trim().notEmpty().withMessage("Content is required"),
+);

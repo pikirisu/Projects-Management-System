@@ -1,97 +1,54 @@
-import { Project } from "../models/project.models.js";
 import { ProjectNote } from "../models/note.models.js";
-import { ApiResponse } from "../utils/api-response.js";
 import { ApiError } from "../utils/api-error.js";
-import { asyncHandler } from "../utils/async-handler.js";
-import mongoose from "mongoose";
+import { respond } from "../utils/api-response.js";
 
-const getNotes = asyncHandler(async (req, res) => {
-    const { projectId } = req.params;
-    const project = await Project.findById(projectId);
+// Like tasks, every note is looked up by its id AND the approved :projectId.
 
-    if (!project) {
-        throw new ApiError(404, "Project not found");
-    }
+const AUTHOR_FIELDS = "username fullName avatar";
 
-    const notes = await ProjectNote.find({
-        project: new mongoose.Types.ObjectId(projectId),
-    }).populate("createdBy", "avatar username fullName");
+export async function getNotes(req, res) {
+    const notes = await ProjectNote.find({ project: req.params.projectId })
+        .populate("createdBy", AUTHOR_FIELDS)
+        .sort({ createdAt: -1 });
+    return respond(res, notes, "Notes fetched");
+}
 
-    return res
-        .status(200)
-        .json(new ApiResponse(200, notes, "Notes fetched successfully"));
-});
-
-const createNote = asyncHandler(async (req, res) => {
-    const { projectId } = req.params;
-    const { content } = req.body;
-
-    const project = await Project.findById(projectId);
-    if (!project) {
-        throw new ApiError(404, "Project not found");
-    }
-
+export async function createNote(req, res) {
     const note = await ProjectNote.create({
-        project: new mongoose.Types.ObjectId(projectId),
-        content,
-        createdBy: new mongoose.Types.ObjectId(req.user._id),
+        project: req.params.projectId,
+        content: req.body.content,
+        createdBy: req.user._id,
     });
+    return respond(res, note, "Note created", 201);
+}
 
-    return res
-        .status(201)
-        .json(new ApiResponse(201, note, "Note created successfully"));
-});
-
-const getNoteById = asyncHandler(async (req, res) => {
+export async function getNoteById(req, res) {
     const { projectId, noteId } = req.params;
-
     const note = await ProjectNote.findOne({
         _id: noteId,
         project: projectId,
-    }).populate("createdBy", "avatar username fullName");
+    }).populate("createdBy", AUTHOR_FIELDS);
+    if (!note) throw new ApiError(404, "Note not found");
+    return respond(res, note, "Note fetched");
+}
 
-    if (!note) {
-        throw new ApiError(404, "Note not found");
-    }
-
-    return res
-        .status(200)
-        .json(new ApiResponse(200, note, "Note fetched successfully"));
-});
-
-const updateNote = asyncHandler(async (req, res) => {
+export async function updateNote(req, res) {
     const { projectId, noteId } = req.params;
-    const { content } = req.body;
-
     const note = await ProjectNote.findOneAndUpdate(
         { _id: noteId, project: projectId },
-        { content },
-        { new: true },
+        { content: req.body.content },
+        { returnDocument: "after" },
     );
+    if (!note) throw new ApiError(404, "Note not found");
+    return respond(res, note, "Note updated");
+}
 
-    if (!note) {
-        throw new ApiError(404, "Note not found");
-    }
-
-    return res
-        .status(200)
-        .json(new ApiResponse(200, note, "Note updated successfully"));
-});
-
-const deleteNote = asyncHandler(async (req, res) => {
+export async function deleteNote(req, res) {
     const { projectId, noteId } = req.params;
-
     const note = await ProjectNote.findOneAndDelete({
         _id: noteId,
         project: projectId,
     });
-    if (!note) {
-        throw new ApiError(404, "Note not found");
-    }
-
-    return res
-        .status(200)
-        .json(new ApiResponse(200, note, "Note deleted successfully"));
-});
-
-export { getNotes, createNote, getNoteById, updateNote, deleteNote };
+    if (!note) throw new ApiError(404, "Note not found");
+    return respond(res, note, "Note deleted");
+}

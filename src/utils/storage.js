@@ -4,148 +4,79 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { v2 as cloudinary } from "cloudinary";
 
-/*
- * Two directories, because the two kinds of upload have to be *served* with
- * different headers. An attachment is a link the browser downloads, so it is
- * served Content-Disposition: attachment -- which is precisely what stops an
- * avatar rendering in an <img>. Splitting them at rest is what lets app.js
- * give each mount the headers it needs; serving one directory under two paths
- * would let any attachment be fetched through the permissive one.
+export const PUBLIC_DIR = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../../public",
+);
+
+/**
+ * The two kinds of upload. They live in separate directories because app.js
+ * serves them with different headers: attachments download, avatars render.
  */
-const LOCAL_DIRS = {
-    attachments: path.resolve(
-        path.dirname(fileURLToPath(import.meta.url)),
-        "../../public/images",
-    ),
-    avatars: path.resolve(
-        path.dirname(fileURLToPath(import.meta.url)),
-        "../../public/avatars",
-    ),
+export const UPLOAD_KINDS = {
+    attachments: {
+        dir: path.join(PUBLIC_DIR, "images"),
+        urlPath: "images",
+        cloudFolder: "project-camp/attachments",
+    },
+    avatars: {
+        dir: path.join(PUBLIC_DIR, "avatars"),
+        urlPath: "avatars",
+        cloudFolder: "project-camp/avatars",
+    },
 };
 
-const URL_SEGMENTS = { attachments: "images", avatars: "avatars" };
+const kindOf = (name) =>
+    Object.hasOwn(UPLOAD_KINDS, name)
+        ? UPLOAD_KINDS[name]
+        : UPLOAD_KINDS.attachments;
 
-// Keeps uploads in their own namespace inside the Cloudinary account, and
-// keeps avatars out of the attachment listing: the two have different
-// lifetimes, and an avatar is replaced far more often than it is deleted.
-const CLOUD_FOLDERS = {
-    attachments: "project-camp/attachments",
-    avatars: "project-camp/avatars",
-};
-
-// Attachment bytes reach this module in memory (see multer.middleware.js) and
-// this is the only place that decides where they land. Two drivers:
-//
-//   cloudinary - used when credentials are present. Survives redeploys, which
-//                matters because a PaaS filesystem is ephemeral: anything
-//                written to public/images is gone on the next restart.
-//   local      - the fallback. Keeps CI hermetic, so the end-to-end suite runs
-//                on fork pull requests without needing a third-party secret,
-//                and keeps `npm run dev` working with no signup.
-//
-// Resolved per call rather than at module load so import ordering cannot decide
-// which driver is active.
-const isCloudinaryConfigured = () =>
+// Decision: Cloudinary when its credentials are set, local disk otherwise. A
+// PaaS filesystem is wiped on every redeploy, so production needs the former;
+// CI and local development run without a third-party account on the latter.
+const useCloudinary = () =>
     Boolean(
         process.env.CLOUDINARY_CLOUD_NAME &&
         process.env.CLOUDINARY_API_KEY &&
         process.env.CLOUDINARY_API_SECRET,
     );
 
-export const activeStorageProvider = () =>
-    isCloudinaryConfigured() ? "cloudinary" : "local";
+let cloudinaryReady = false;
 
-const configureCloudinary = () => {
-    cloudinary.config({
-        cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-        api_key: process.env.CLOUDINARY_API_KEY,
-        api_secret: process.env.CLOUDINARY_API_SECRET,
-        secure: true,
-    });
-};
+function cloudinaryClient() {
+    if (!cloudinaryReady) {
+        cloudinary.config({
+            cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+            api_key: process.env.CLOUDINARY_API_KEY,
+            api_secret: process.env.CLOUDINARY_API_SECRET,
+            secure: true,
+        });
+        cloudinaryReady = true;
+    }
+    return cloudinary;
+}
 
-// The SDK's buffer path is a write stream with a callback, not a promise.
 const uploadToCloudinary = (file, folder) =>
     new Promise((resolve, reject) => {
-        const stream = cloudinary.uploader.upload_stream(
-            {
-                folder,
-                // "auto" lets Cloudinary classify images vs. raw files (txt, md)
-                // itself; the resolved type comes back on the result and has to
-                // be stored, because destroy() needs it later.
-                resource_type: "auto",
-            },
-            (error, result) => (error ? reject(error) : resolve(result)),
-        );
-        stream.end(file.buffer);
+        cloudinaryClient()
+            .uploader.upload_stream(
+                // "auto" classifies images vs raw files; destroy() needs the result.
+                { folder, resource_type: "auto" },
+                (error, result) => (error ? reject(error) : resolve(result)),
+            )
+            .end(file.buffer);
     });
 
-const saveLocally = async (file, kind) => {
-    const dir = LOCAL_DIRS[kind];
-    await fs.mkdir(dir, { recursive: true });
-    // Never reuse the client's filename: it carries an attacker-controlled
-    // extension, and two uploads in the same millisecond would collide.
-    const ext = path.extname(file.originalname).toLowerCase();
-    const key = `${crypto.randomUUID()}${ext}`;
-    await fs.writeFile(path.join(dir, key), file.buffer);
-    return {
-        url: `${process.env.SERVER_URL}/${URL_SEGMENTS[kind]}/${key}`,
-        key,
-        resourceType: "local",
-        // Which directory to look in when this is deleted later. Absent on
-        // every row written before avatars existed, all of which are
-        // attachments, which is what resolveLocalPath defaults to.
-        folder: kind,
-    };
-};
-
 /**
- * Resolves a stored key to a path inside its upload directory, or throws.
- *
- * Keys are UUIDs written by saveLocally, so in practice nothing here is
- * attacker-controlled. The check is for the paths that bypass that: a row
- * written by an older version, restored from a backup, or edited directly in
- * the database. A key of "../../src/app.js" would otherwise resolve to a real
- * file and unlink it, turning a task delete into arbitrary file deletion.
- *
- * An unrecognised folder falls back to the attachment directory rather than
- * widening the search: every row that predates avatars is an attachment, and a
- * folder name that is not one of the two known ones must not select a path.
+ * Stores one multer file and returns the subdocument to persist. `provider`,
+ * `key`, `resourceType` and `folder` are what deleteStoredFiles needs later.
  */
-export const resolveLocalPath = (key, folder = "attachments") => {
-    const dir = LOCAL_DIRS[folder] ?? LOCAL_DIRS.attachments;
-    const resolved = path.resolve(dir, key);
+export async function saveUpload(file, kind = "attachments") {
+    const { dir, urlPath, cloudFolder } = kindOf(kind);
+    const base = { mimetype: file.mimetype, size: file.size, folder: kind };
 
-    // path.resolve collapses "..", so comparing afterwards is what catches
-    // traversal; checking the key for ".." beforehand would miss encodings.
-    if (resolved !== path.join(dir, path.basename(resolved))) {
-        throw new Error(
-            `refusing to delete outside the upload directory: ${key}`,
-        );
-    }
-
-    return resolved;
-};
-
-/**
- * Persists one uploaded file and returns the subdocument to store.
- * `provider` and `key` are what make deletion possible later -- without them a
- * removed task, or a replaced avatar, would leave its blob orphaned in
- * Cloudinary forever.
- *
- * `kind` selects the remote folder and nothing else; the local driver writes
- * every upload to the same directory under a UUID, so there is nothing to
- * separate there.
- */
-export const saveUpload = async (file, { kind = "attachments" } = {}) => {
-    const base = { mimetype: file.mimetype, size: file.size };
-
-    if (isCloudinaryConfigured()) {
-        configureCloudinary();
-        const result = await uploadToCloudinary(
-            file,
-            CLOUD_FOLDERS[kind] ?? CLOUD_FOLDERS.attachments,
-        );
+    if (useCloudinary()) {
+        const result = await uploadToCloudinary(file, cloudFolder);
         return {
             ...base,
             url: result.secure_url,
@@ -155,41 +86,59 @@ export const saveUpload = async (file, { kind = "attachments" } = {}) => {
         };
     }
 
-    const { url, key, resourceType, folder } = await saveLocally(file, kind);
-    return { ...base, url, provider: "local", key, resourceType, folder };
-};
+    // Never reuse the client's filename: it is attacker-controlled.
+    const ext = path.extname(file.originalname).toLowerCase();
+    const key = `${crypto.randomUUID()}${ext}`;
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, key), file.buffer);
+
+    return {
+        ...base,
+        url: `${process.env.SERVER_URL}/${urlPath}/${key}`,
+        provider: "local",
+        key,
+    };
+}
+
+// Decision: local keys are server-generated UUIDs, but a row restored from a
+// backup or edited by hand could hold "../../src/app.js". The key is resolved
+// first and refused if it lands outside the upload directory, so a delete can
+// never escape it. An unknown folder falls back to attachments, never wider.
+export function resolveLocalPath(key, folder = "attachments") {
+    const { dir } = kindOf(folder);
+    const resolved = path.resolve(dir, key);
+
+    if (resolved !== path.join(dir, path.basename(resolved))) {
+        throw new Error(
+            `refusing to delete outside the upload directory: ${key}`,
+        );
+    }
+    return resolved;
+}
 
 /**
- * Best-effort cleanup of stored blobs, for anything carrying {provider, key,
- * resourceType} -- task attachments and replaced avatars alike. Failures are
- * logged, never thrown: the row is already gone by the time this runs, and an
- * orphaned blob is not worth turning a successful write into a 500.
- *
- * Rows written before this module existed have no `key`, so they are skipped
- * rather than crashing on undefined. The seeded placeholder avatar has none
- * either, which is exactly why that check has to come first.
+ * Best-effort cleanup for anything saveUpload returned. Failures are logged,
+ * not thrown: the row is already gone, and an orphaned blob is not worth
+ * failing the request over. Entries without a `key` (old rows) are skipped.
  */
-export const deleteAttachments = async (attachments = []) => {
+export async function deleteStoredFiles(files = []) {
     await Promise.all(
-        attachments.map(async (attachment) => {
-            if (!attachment?.key) return;
+        files.map(async (file) => {
+            if (!file?.key) return;
             try {
-                if (attachment.provider === "cloudinary") {
-                    configureCloudinary();
-                    await cloudinary.uploader.destroy(attachment.key, {
-                        resource_type: attachment.resourceType || "image",
+                if (file.provider === "cloudinary") {
+                    await cloudinaryClient().uploader.destroy(file.key, {
+                        resource_type: file.resourceType || "image",
                     });
                 } else {
-                    await fs.unlink(
-                        resolveLocalPath(attachment.key, attachment.folder),
-                    );
+                    await fs.unlink(resolveLocalPath(file.key, file.folder));
                 }
             } catch (error) {
                 console.error(
-                    `[storage] could not delete attachment ${attachment.key}:`,
+                    `[storage] could not delete ${file.key}:`,
                     error?.message,
                 );
             }
         }),
     );
-};
+}

@@ -1,20 +1,18 @@
 import { validationResult } from "express-validator";
 import { ApiError } from "../utils/api-error.js";
 
-export const validate = (req, res, next) => {
-    const errors = validationResult(req);
-    if (errors.isEmpty()) {
-        return next();
+/** Answers 422 with one `{ field: message }` per invalid field. */
+export function validate(req, res, next) {
+    const errors = validationResult(req)
+        .array()
+        .map(({ path, msg }) => ({ [path]: msg }));
+
+    if (errors.length > 0) {
+        throw new ApiError(
+            422,
+            "Some of the submitted fields are invalid",
+            errors,
+        );
     }
-    const extractedErrors = [];
-    errors.array().map((err) =>
-        extractedErrors.push({
-            [err.path]: err.msg,
-        }),
-    );
-    throw new ApiError(
-        422,
-        "Some of the submitted fields are invalid",
-        extractedErrors,
-    );
-};
+    next();
+}

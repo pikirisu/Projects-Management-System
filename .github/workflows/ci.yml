@@ -26,8 +26,8 @@ jobs:
 
     env:
       MONGO_URI: mongodb://localhost:27017/backend_one_ci
-      PORT: 3000
-      SERVER_URL: http://localhost:3000
+      PORT: 8000
+      SERVER_URL: http://localhost:8000
       ACCESS_TOKEN_SECRET: ci-only-access-secret-not-used-anywhere-real
       ACCESS_TOKEN_EXPIRY: 1d
       REFRESH_TOKEN_SECRET: ci-only-refresh-secret-not-used-anywhere-real
@@ -75,15 +75,15 @@ jobs:
         # polling it for a 200 is a genuine readiness gate, not just a liveness one.
         run: |
           for i in $(seq 1 30); do
-            code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/api/v1/healthcheck || true)
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/v1/healthcheck || true)
             if [ "$code" = "200" ]; then echo "healthy after ${i}s"; exit 0; fi
             sleep 1
           done
           echo "server did not become healthy in 30s"
-          curl -s http://localhost:3000/api/v1/healthcheck || true
+          curl -s http://localhost:8000/api/v1/healthcheck || true
           exit 1
 
-      - name: End-to-end verify (RBAC, IDOR, upload allowlist)
+      - name: End-to-end verify
         run: npm run verify
 
   frontend:

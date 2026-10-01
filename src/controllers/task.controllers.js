@@ -1,119 +1,80 @@
-import { Project } from "../models/project.models.js";
-import { Task } from "../models/task.models.js";
-import { Subtask } from "../models/subtask.models.js";
-import { ProjectMember } from "../models/projectmember.models.js";
-import { ApiResponse } from "../utils/api-response.js";
-import { ApiError } from "../utils/api-error.js";
-import { asyncHandler } from "../utils/async-handler.js";
 import mongoose from "mongoose";
+import { ProjectMember } from "../models/projectmember.models.js";
+import { Subtask } from "../models/subtask.models.js";
+import { Task } from "../models/task.models.js";
 import { lookupUser } from "../utils/aggregations.js";
-import { UserRolesEnum } from "../utils/constants.js";
-import { saveUpload, deleteAttachments } from "../utils/storage.js";
+import { ApiError } from "../utils/api-error.js";
+import { respond } from "../utils/api-response.js";
+import { MANAGER_ROLES } from "../utils/constants.js";
+import { deleteStoredFiles, saveUpload } from "../utils/storage.js";
 
-// A Subtask references only its parent Task, never a project, so authorization
-// has to resolve through that parent. Both failure modes throw an identical 404
-// so a caller cannot distinguish "no such subtask" from "not in your project".
-const assertSubtaskInProject = async (subTaskId, projectId) => {
-    const subtask = await Subtask.findById(subTaskId).select("task");
-    if (!subtask) {
-        throw new ApiError(404, "Subtask not found");
+// Decision: every child resource is fetched by its own id AND the :projectId
+// the role guard approved. A task from another project answers 404, exactly
+// like one that does not exist, so ids cannot be probed across projects.
+
+const TASK_FIELDS = ["title", "description", "status", "assignedTo"];
+
+/** The task fields present in a request body, ready for $set. */
+function taskChanges(body) {
+    const $set = {};
+    for (const field of TASK_FIELDS) {
+        if (body[field] !== undefined) $set[field] = body[field];
     }
+    return { $set };
+}
 
-    const parentTask = await Task.findOne({
-        _id: subtask.task,
+// Decision: an assignee must be a member of the project, or they would own a
+// task they cannot open. Checked before any upload, so a refused request never
+// leaves files in storage with no row pointing at them.
+async function assertAssigneeIsMember(assignedTo, projectId) {
+    if (!assignedTo) return;
+    const isMember = await ProjectMember.exists({
         project: projectId,
-    }).select("_id");
-
-    if (!parentTask) {
-        throw new ApiError(404, "Subtask not found");
-    }
-};
-
-/*
- * The validator can only see the request body, so all it can check is that
- * `assignedTo` looks like an ObjectId. Whether that user is on this project is
- * a fact about another collection -- and assigning work to a non-member gives
- * them a task they cannot open, because every task route is gated on
- * membership in the project the task belongs to.
- */
-const assertAssigneeIsMember = async (assignedTo, projectId) => {
-    const member = await ProjectMember.findOne({
-        project: new mongoose.Types.ObjectId(projectId),
-        user: new mongoose.Types.ObjectId(assignedTo),
-    }).select("_id");
-
-    if (!member) {
+        user: assignedTo,
+    });
+    if (!isMember) {
         throw new ApiError(
             400,
             "Assigned user is not a member of this project",
         );
     }
-};
+}
 
-const getTasks = asyncHandler(async (req, res) => {
+const uploadAll = (files = []) =>
+    Promise.all(files.map((file) => saveUpload(file)));
+
+// ---- tasks -------------------------------------------------------------------
+
+export async function getTasks(req, res) {
+    const tasks = await Task.find({ project: req.params.projectId })
+        .populate("assignedTo", "username fullName avatar")
+        .sort({ createdAt: -1 });
+    return respond(res, tasks, "Tasks fetched");
+}
+
+export async function createTask(req, res) {
     const { projectId } = req.params;
-    const project = await Project.findById(projectId);
-    if (!project) {
-        throw new ApiError(404, "Project not found");
-    }
-    const tasks = await Task.find({
-        project: new mongoose.Types.ObjectId(projectId),
-    }).populate("assignedTo", "avatar username fullName");
-
-    return res
-        .status(200)
-        .json(new ApiResponse(200, tasks, "Task fetched successfully"));
-});
-const createTask = asyncHandler(async (req, res) => {
-    const { title, description, assignedTo, status } = req.body;
-    const { projectId } = req.params;
-    const project = await Project.findById(projectId);
-
-    if (!project) {
-        throw new ApiError(404, "Project not found");
-    }
-    // Before the upload, not after: a rejected task that has already written
-    // its blobs leaves them orphaned in storage with no row to delete them by.
-    if (assignedTo) {
-        await assertAssigneeIsMember(assignedTo, projectId);
-    }
-
-    const files = req.files || [];
-
-    // Uploaded in parallel; storage.js decides Cloudinary vs. local disk and
-    // returns the subdocument to persist, including the key needed to delete
-    // the blob again later.
-    const attachments = await Promise.all(
-        files.map((file) => saveUpload(file)),
-    );
+    const { $set } = taskChanges(req.body);
+    await assertAssigneeIsMember($set.assignedTo, projectId);
 
     const task = await Task.create({
-        title,
-        description,
-        project: new mongoose.Types.ObjectId(projectId),
-        assignedTo: assignedTo
-            ? new mongoose.Types.ObjectId(assignedTo)
-            : undefined,
-        status,
-        assignedBy: new mongoose.Types.ObjectId(req.user._id),
-        attachments,
+        ...$set,
+        project: projectId,
+        assignedBy: req.user._id,
+        attachments: await uploadAll(req.files),
     });
+    return respond(res, task, "Task created", 201);
+}
 
-    return res
-        .status(201)
-        .json(new ApiResponse(201, task, "Task created successfully"));
-});
-const getTaskById = asyncHandler(async (req, res) => {
-    const { projectId, taskId } = req.params;
-
-    const task = await Task.aggregate([
+export async function getTaskById(req, res) {
+    const [task] = await Task.aggregate([
         {
             $match: {
-                _id: new mongoose.Types.ObjectId(taskId),
-                project: new mongoose.Types.ObjectId(projectId),
+                _id: new mongoose.Types.ObjectId(req.params.taskId),
+                project: new mongoose.Types.ObjectId(req.params.projectId),
             },
         },
-        lookupUser("assignedTo"),
+        ...lookupUser("assignedTo"),
         {
             $lookup: {
                 from: "subtasks",
@@ -121,213 +82,122 @@ const getTaskById = asyncHandler(async (req, res) => {
                 foreignField: "task",
                 as: "subtasks",
                 pipeline: [
-                    lookupUser("createdBy"),
-                    {
-                        $addFields: {
-                            createdBy: {
-                                $arrayElemAt: ["$createdBy", 0],
-                            },
-                        },
-                    },
+                    ...lookupUser("createdBy"),
+                    { $sort: { createdAt: 1 } },
                 ],
             },
         },
-        {
-            $addFields: {
-                assignedTo: {
-                    $arrayElemAt: ["$assignedTo", 0],
-                },
-            },
-        },
     ]);
+    if (!task) throw new ApiError(404, "Task not found");
+    return respond(res, task, "Task fetched");
+}
 
-    if (!task || task.length === 0) {
-        throw new ApiError(404, "Task not found");
-    }
-    return res
-        .status(200)
-        .json(new ApiResponse(200, task[0], "Task fetched successfully"));
-});
-const updateTask = asyncHandler(async (req, res) => {
+export async function updateTask(req, res) {
     const { projectId, taskId } = req.params;
-    const { title, description, assignedTo, status } = req.body;
+    const { $set } = taskChanges(req.body);
+    await assertAssigneeIsMember($set.assignedTo, projectId);
 
-    if (assignedTo !== undefined) {
-        await assertAssigneeIsMember(assignedTo, projectId);
-    }
-
-    const files = req.files || [];
-    const newAttachments = await Promise.all(
-        files.map((file) => saveUpload(file)),
-    );
-
-    const updateOps = {
-        $set: {
-            ...(title !== undefined && { title }),
-            ...(description !== undefined && { description }),
-            ...(assignedTo !== undefined && {
-                assignedTo: new mongoose.Types.ObjectId(assignedTo),
-            }),
-            ...(status !== undefined && { status }),
-        },
-    };
-    if (newAttachments.length > 0) {
-        updateOps.$push = { attachments: { $each: newAttachments } };
+    // New files are appended; removing one is deleteTaskAttachment's job.
+    const attachments = await uploadAll(req.files);
+    const update = { $set };
+    if (attachments.length > 0) {
+        update.$push = { attachments: { $each: attachments } };
     }
 
     const task = await Task.findOneAndUpdate(
         { _id: taskId, project: projectId },
-        updateOps,
-        { new: true },
+        update,
+        { returnDocument: "after" },
     );
-
     if (!task) {
+        await deleteStoredFiles(attachments);
         throw new ApiError(404, "Task not found");
     }
+    return respond(res, task, "Task updated");
+}
 
-    return res
-        .status(200)
-        .json(new ApiResponse(200, task, "Task updated successfully"));
-});
-const deleteTask = asyncHandler(async (req, res) => {
+export async function deleteTask(req, res) {
     const { projectId, taskId } = req.params;
-
     const task = await Task.findOneAndDelete({
         _id: taskId,
         project: projectId,
     });
-    if (!task) {
-        throw new ApiError(404, "Task not found");
-    }
+    if (!task) throw new ApiError(404, "Task not found");
 
     await Subtask.deleteMany({ task: taskId });
+    await deleteStoredFiles(task.attachments);
+    return respond(res, task, "Task deleted");
+}
 
-    // Best effort, and deliberately after the row is gone: a blob we fail to
-    // remove is wasted storage, but a blob store outage should not stop the
-    // caller from deleting their own task.
-    await deleteAttachments(task.attachments);
-
-    return res
-        .status(200)
-        .json(new ApiResponse(200, task, "Task deleted successfully"));
-});
-const deleteTaskAttachment = asyncHandler(async (req, res) => {
+export async function deleteTaskAttachment(req, res) {
     const { projectId, taskId, attachmentId } = req.params;
 
-    /*
-     * The read is only to recover the blob's provider and key, which the
-     * subdocument stops carrying once it is pulled. The removal itself is a
-     * single $pull scoped to both task and project -- splicing the array in
-     * memory and saving the whole document would instead drop any attachment
-     * another request appended in between.
-     */
-    const task = await Task.findOne({ _id: taskId, project: projectId });
-    if (!task) {
-        throw new ApiError(404, "Task not found");
-    }
-
-    const attachment = task.attachments?.id(attachmentId);
-    if (!attachment) {
-        throw new ApiError(404, "Attachment not found");
-    }
-
-    // Snapshot before the pull: the subdocument is detached from the array
-    // afterwards, and deleteAttachments still needs its provider and key.
-    const removed = {
-        provider: attachment.provider,
-        key: attachment.key,
-        resourceType: attachment.resourceType,
-    };
-
-    const updated = await Task.findOneAndUpdate(
-        { _id: taskId, project: projectId },
-        { $pull: { attachments: { _id: attachment._id } } },
-        { new: true },
+    // One atomic $pull scoped to the project. The document it returns is from
+    // before the pull, so it still holds the attachment whose file to delete.
+    const task = await Task.findOneAndUpdate(
+        { _id: taskId, project: projectId, "attachments._id": attachmentId },
+        { $pull: { attachments: { _id: attachmentId } } },
     );
+    if (!task) throw new ApiError(404, "Attachment not found");
 
-    // Best effort and deliberately last, matching deleteTask: the row is the
-    // source of truth, and a blob store outage should not fail the request.
-    await deleteAttachments([removed]);
+    const removed = task.attachments.id(attachmentId).toObject();
+    task.attachments.pull(attachmentId); // mirror the write in the response
+    await deleteStoredFiles([removed]);
 
-    return res
-        .status(200)
-        .json(new ApiResponse(200, updated, "Attachment removed successfully"));
-});
+    return respond(res, task, "Attachment removed");
+}
 
-const createSubTask = asyncHandler(async (req, res) => {
+// ---- subtasks ----------------------------------------------------------------
+
+/** A subtask belongs to a task, not a project, so scope through its parent. */
+async function assertSubtaskInProject(subTaskId, projectId) {
+    const subtask = await Subtask.findById(subTaskId).select("task");
+    const inProject =
+        subtask &&
+        (await Task.exists({ _id: subtask.task, project: projectId }));
+    if (!inProject) throw new ApiError(404, "Subtask not found");
+}
+
+export async function createSubTask(req, res) {
     const { projectId, taskId } = req.params;
-    const { title } = req.body;
-
-    const task = await Task.findOne({ _id: taskId, project: projectId });
-    if (!task) {
+    if (!(await Task.exists({ _id: taskId, project: projectId }))) {
         throw new ApiError(404, "Task not found");
     }
 
     const subtask = await Subtask.create({
-        title,
-        task: new mongoose.Types.ObjectId(taskId),
-        createdBy: new mongoose.Types.ObjectId(req.user._id),
+        title: req.body.title,
+        task: taskId,
+        createdBy: req.user._id,
     });
+    return respond(res, subtask, "Subtask created", 201);
+}
 
-    return res
-        .status(201)
-        .json(new ApiResponse(201, subtask, "Subtask created successfully"));
-});
-const updateSubTask = asyncHandler(async (req, res) => {
+export async function updateSubTask(req, res) {
     const { projectId, subTaskId } = req.params;
     const { title, isCompleted } = req.body;
-
     await assertSubtaskInProject(subTaskId, projectId);
 
-    const $set = {};
-
-    if (isCompleted !== undefined) {
-        $set.isCompleted = isCompleted;
-    }
-
-    if (title !== undefined) {
-        if (
-            req.user.role !== UserRolesEnum.ADMIN &&
-            req.user.role !== UserRolesEnum.PROJECT_ADMIN
-        ) {
-            throw new ApiError(403, "Members not authorized to change titles.");
-        }
-        $set.title = title;
+    // Any member may tick a subtask off; only a manager may rename it.
+    if (title !== undefined && !MANAGER_ROLES.includes(req.projectRole)) {
+        throw new ApiError(403, "Only a project admin can rename a subtask");
     }
 
     const subtask = await Subtask.findByIdAndUpdate(
         subTaskId,
-        { $set },
-        { new: true },
+        {
+            $set: {
+                ...(title !== undefined && { title }),
+                ...(isCompleted !== undefined && { isCompleted }),
+            },
+        },
+        { returnDocument: "after" },
     );
-    if (!subtask) throw new ApiError(404, "Subtask not found");
-    return res
-        .status(200)
-        .json(new ApiResponse(200, subtask, "Subtask updated successfully"));
-});
-const deleteSubTask = asyncHandler(async (req, res) => {
+    return respond(res, subtask, "Subtask updated");
+}
+
+export async function deleteSubTask(req, res) {
     const { projectId, subTaskId } = req.params;
-
     await assertSubtaskInProject(subTaskId, projectId);
-
     const subtask = await Subtask.findByIdAndDelete(subTaskId);
-    if (!subtask) {
-        throw new ApiError(404, "Subtask not found");
-    }
-
-    return res
-        .status(200)
-        .json(new ApiResponse(200, subtask, "Subtask deleted successfully"));
-});
-
-export {
-    createSubTask,
-    createTask,
-    deleteTask,
-    deleteSubTask,
-    deleteTaskAttachment,
-    getTaskById,
-    getTasks,
-    updateSubTask,
-    updateTask,
-};
+    return respond(res, subtask, "Subtask deleted");
+}

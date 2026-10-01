@@ -1,44 +1,31 @@
 import { Router } from "express";
 import {
-    getNotes,
     createNote,
-    getNoteById,
-    updateNote,
     deleteNote,
+    getNoteById,
+    getNotes,
+    updateNote,
 } from "../controllers/note.controllers.js";
-import { validate } from "../middlewares/validator.middleware.js";
 import {
-    noteCreateValidator,
-    noteUpdateValidator,
-} from "../validators/index.js";
-import {
+    adminsOnly,
+    anyMember,
     verifyJWT,
-    validateProjectPermission,
 } from "../middlewares/auth.middleware.js";
-import { AvailableUserRole, UserRolesEnum } from "../utils/constants.js";
+import { noteRules } from "../validators/index.js";
 
 const router = Router();
 router.use(verifyJWT);
 
+// Everyone on the project reads notes; only admins write them.
 router
     .route("/:projectId")
-    .get(validateProjectPermission(AvailableUserRole), getNotes)
-    .post(
-        validateProjectPermission([UserRolesEnum.ADMIN]),
-        noteCreateValidator(),
-        validate,
-        createNote,
-    );
+    .get(anyMember, getNotes)
+    .post(adminsOnly, noteRules, createNote);
 
 router
     .route("/:projectId/n/:noteId")
-    .get(validateProjectPermission(AvailableUserRole), getNoteById)
-    .put(
-        validateProjectPermission([UserRolesEnum.ADMIN]),
-        noteUpdateValidator(),
-        validate,
-        updateNote,
-    )
-    .delete(validateProjectPermission([UserRolesEnum.ADMIN]), deleteNote);
+    .get(anyMember, getNoteById)
+    .put(adminsOnly, noteRules, updateNote)
+    .delete(adminsOnly, deleteNote);
 
 export default router;

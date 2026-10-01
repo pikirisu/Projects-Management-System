@@ -1,58 +1,45 @@
 import { Router } from "express";
 import {
-    addMembersToProject,
+    addMemberToProject,
     createProject,
     deleteMember,
-    getProjects,
+    deleteProject,
     getProjectById,
     getProjectMembers,
-    updateProject,
-    deleteProject,
+    getProjects,
     updateMemberRole,
+    updateProject,
 } from "../controllers/project.controllers.js";
-import { validate } from "../middlewares/validator.middleware.js";
 import {
-    createProjectValidator,
-    addMembertoProjectValidator,
-} from "../validators/index.js";
-import {
+    adminsOnly,
+    anyMember,
     verifyJWT,
-    validateProjectPermission,
 } from "../middlewares/auth.middleware.js";
-import { AvailableUserRole, UserRolesEnum } from "../utils/constants.js";
+import {
+    addMemberRules,
+    memberRoleRules,
+    projectRules,
+} from "../validators/index.js";
 
 const router = Router();
 router.use(verifyJWT);
 
-router
-    .route("/")
-    .get(getProjects)
-    .post(createProjectValidator(), validate, createProject);
+router.route("/").get(getProjects).post(projectRules, createProject);
 
 router
     .route("/:projectId")
-    .get(validateProjectPermission(AvailableUserRole), getProjectById)
-    .put(
-        validateProjectPermission([UserRolesEnum.ADMIN]),
-        createProjectValidator(),
-        validate,
-        updateProject,
-    )
-    .delete(validateProjectPermission([UserRolesEnum.ADMIN]), deleteProject);
+    .get(anyMember, getProjectById)
+    .put(adminsOnly, projectRules, updateProject)
+    .delete(adminsOnly, deleteProject);
 
 router
     .route("/:projectId/members")
-    .get(validateProjectPermission(AvailableUserRole), getProjectMembers)
-    .post(
-        validateProjectPermission([UserRolesEnum.ADMIN]),
-        addMembertoProjectValidator(),
-        validate,
-        addMembersToProject,
-    );
+    .get(anyMember, getProjectMembers)
+    .post(adminsOnly, addMemberRules, addMemberToProject);
 
 router
     .route("/:projectId/members/:userId")
-    .put(validateProjectPermission([UserRolesEnum.ADMIN]), updateMemberRole)
-    .delete(validateProjectPermission([UserRolesEnum.ADMIN]), deleteMember);
+    .put(adminsOnly, memberRoleRules, updateMemberRole)
+    .delete(adminsOnly, deleteMember);
 
 export default router;

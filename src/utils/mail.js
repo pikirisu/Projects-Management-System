@@ -1,88 +1,74 @@
 import Mailgen from "mailgen";
 import nodemailer from "nodemailer";
 
-const sendEmail = async (options) => {
-    const mailGenerator = new Mailgen({
-        theme: "default",
-        product: {
-            name: "Task Manager",
-            link: "https://taskmanagelink.com",
-        },
-    });
+let transporter;
 
-    const emailTextual = mailGenerator.generatePlaintext(
-        options.mailgenContent,
-    );
-
-    const emailHtml = mailGenerator.generate(options.mailgenContent);
-
-    const transporter = nodemailer.createTransport({
+// Created on first use rather than at import, so it reads the loaded env.
+function getTransporter() {
+    transporter ??= nodemailer.createTransport({
         host: process.env.MAILTRAP_SMTP_HOST,
-        port: process.env.MAILTRAP_SMTP_PORT,
+        port: Number(process.env.MAILTRAP_SMTP_PORT),
         auth: {
             user: process.env.MAILTRAP_SMTP_USER,
             pass: process.env.MAILTRAP_SMTP_PASS,
         },
     });
+    return transporter;
+}
 
-    const mail = {
-        from: "mail.taskmanager@example.com",
-        to: options.email,
-        subject: options.subject,
-        text: emailTextual,
-        html: emailHtml,
-    };
-
+/**
+ * Sends one email. Failures are logged and never thrown, so a caller can fire
+ * this without awaiting it.
+ */
+export async function sendEmail({ to, subject, content }) {
     try {
-        await transporter.sendMail(mail);
+        const mailGenerator = new Mailgen({
+            theme: "default",
+            product: {
+                name: "Project Camp",
+                link: process.env.APP_URL || "http://localhost:5173",
+            },
+        });
+
+        await getTransporter().sendMail({
+            from:
+                process.env.MAILTRAP_SENDEREMAIL || "no-reply@projectcamp.dev",
+            to,
+            subject,
+            text: mailGenerator.generatePlaintext(content),
+            html: mailGenerator.generate(content),
+        });
     } catch (error) {
-        console.error(
-            "Email service failed siliently. Make sure that you have provided your MAILTRAP credentials in the .env file",
-        );
-        console.error("Error: ", error);
+        console.error(`[mail] could not send "${subject}":`, error.message);
     }
-};
+}
 
-const emailVerificationMailgenContent = (username, verficationUrl) => {
-    return {
-        body: {
-            name: username,
-            intro: "Welcome to our App! we'are excited to have you on board.",
-            action: {
-                instructions:
-                    "To verify your email please click on the following button",
-                button: {
-                    color: "#22BC66",
-                    text: "Verify your email",
-                    link: verficationUrl,
-                },
-            },
-            outro: "Need help, or have questions? Just reply to this email, we'd love to help.",
+const actionEmail = ({ name, intro, instructions, buttonText, link }) => ({
+    body: {
+        name,
+        intro,
+        action: {
+            instructions,
+            button: { color: "#4f46e5", text: buttonText, link },
         },
-    };
-};
+        outro: "If you did not expect this email, you can safely ignore it.",
+    },
+});
 
-const forgotPasswordMailgenContent = (username, passwordResetUrl) => {
-    return {
-        body: {
-            name: username,
-            intro: "We got a request to reset the password of your account",
-            action: {
-                instructions:
-                    "To reset your password click on the following button or link",
-                button: {
-                    color: "#22BC66",
-                    text: "Reset password",
-                    link: passwordResetUrl,
-                },
-            },
-            outro: "Need help, or have questions? Just reply to this email, we'd love to help.",
-        },
-    };
-};
+export const verificationEmail = (name, link) =>
+    actionEmail({
+        name,
+        intro: "Welcome to Project Camp!",
+        instructions: "Confirm your email address to finish setting up.",
+        buttonText: "Verify email",
+        link,
+    });
 
-export {
-    emailVerificationMailgenContent,
-    forgotPasswordMailgenContent,
-    sendEmail,
-};
+export const passwordResetEmail = (name, link) =>
+    actionEmail({
+        name,
+        intro: "We received a request to reset your password.",
+        instructions: "This link works once and expires in 20 minutes.",
+        buttonText: "Reset password",
+        link,
+    });
