@@ -10,3 +10,5 @@ export const ALL_ROLES = Object.values(ROLES);
 export const MANAGER_ROLES = [ROLES.ADMIN, ROLES.PROJECT_ADMIN];
 
 export const TASK_STATUSES = ["todo", "in_progress", "done"];
+
+export const TASK_PRIORITIES = ["low", "medium", "high"];

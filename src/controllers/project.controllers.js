@@ -14,9 +14,9 @@ import { deleteStoredFiles } from "../utils/storage.js";
 // ---- projects ----------------------------------------------------------------
 
 /**
- * Every project the caller belongs to, with their role on it and its member
- * count. One round trip: the count is a $lookup sub-pipeline rather than
- * loading every membership row.
+ * Every project the caller belongs to, with their role on it, its member count
+ * and its tasks counted by status. One round trip: the counts are computed by
+ * $lookup sub-pipelines rather than by loading the rows they count.
  */
 export async function getProjects(req, res) {
     const projects = await ProjectMember.aggregate([
@@ -40,6 +40,15 @@ export async function getProjects(req, res) {
             },
         },
         {
+            $lookup: {
+                from: "tasks",
+                localField: "project._id",
+                foreignField: "project",
+                as: "statusCounts",
+                pipeline: [{ $group: { _id: "$status", n: { $sum: 1 } } }],
+            },
+        },
+        {
             $project: {
                 _id: 0,
                 role: 1,
@@ -50,6 +59,14 @@ export async function getProjects(req, res) {
                     createdBy: "$project.createdBy",
                     createdAt: "$project.createdAt",
                     members: { $ifNull: [{ $first: "$memberCount.n" }, 0] },
+                    taskCounts: {
+                        $arrayToObject: {
+                            $map: {
+                                input: "$statusCounts",
+                                in: { k: "$$this._id", v: "$$this.n" },
+                            },
+                        },
+                    },
                 },
             },
         },

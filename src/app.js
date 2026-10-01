@@ -6,6 +6,7 @@ import { errorHandler } from "./middlewares/error.middleware.js";
 import { globalLimiter } from "./middlewares/rate-limit.middleware.js";
 import authRouter from "./routes/auth.routes.js";
 import healthCheckRouter from "./routes/healthcheck.routes.js";
+import meRouter from "./routes/me.routes.js";
 import noteRouter from "./routes/note.routes.js";
 import projectRouter from "./routes/project.routes.js";
 import taskRouter from "./routes/task.routes.js";
@@ -80,6 +81,7 @@ app.use(
 app.use("/api/v1", globalLimiter);
 app.use("/api/v1/healthcheck", healthCheckRouter);
 app.use("/api/v1/auth", authRouter);
+app.use("/api/v1/me", meRouter);
 app.use("/api/v1/projects", projectRouter);
 app.use("/api/v1/tasks", taskRouter);
 app.use("/api/v1/notes", noteRouter);

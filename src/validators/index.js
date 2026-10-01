@@ -1,6 +1,10 @@
 import { body } from "express-validator";
 import { validate } from "../middlewares/validator.middleware.js";
-import { ALL_ROLES, TASK_STATUSES } from "../utils/constants.js";
+import {
+    ALL_ROLES,
+    TASK_PRIORITIES,
+    TASK_STATUSES,
+} from "../utils/constants.js";
 
 /** A rule set ends with `validate`, so a route lists it as one middleware. */
 const rules = (...chains) => [...chains, validate];
@@ -105,11 +109,19 @@ const taskRules = ({ optional }) =>
             .optional()
             .isIn(TASK_STATUSES)
             .withMessage("Status is invalid"),
-        // Empty (null or "") is allowed: it clears the assignee.
+        body("priority")
+            .optional()
+            .isIn(TASK_PRIORITIES)
+            .withMessage("Priority is invalid"),
+        // Empty (null or "") is allowed: it clears the assignee or due date.
         body("assignedTo")
             .optional({ values: "falsy" })
             .isMongoId()
             .withMessage("Assignee is invalid"),
+        body("dueDate")
+            .optional({ values: "falsy" })
+            .isISO8601()
+            .withMessage("Due date is invalid"),
     );
 
 export const createTaskRules = taskRules({ optional: false });

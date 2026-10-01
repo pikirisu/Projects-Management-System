@@ -12,11 +12,19 @@ import { deleteStoredFiles, saveUpload } from "../utils/storage.js";
 // the role guard approved. A task from another project answers 404, exactly
 // like one that does not exist, so ids cannot be probed across projects.
 
-const TASK_FIELDS = ["title", "description", "status", "assignedTo"];
+const TASK_FIELDS = [
+    "title",
+    "description",
+    "status",
+    "priority",
+    "assignedTo",
+    "dueDate",
+];
 
 /**
  * Splits a request body into $set and $unset. An empty value (null, or "" from
- * a multipart form) clears the field: that is how a task is unassigned.
+ * a multipart form) clears the field: that is how a task is unassigned or
+ * loses its due date.
  */
 function taskChanges(body) {
     const $set = {};
@@ -57,6 +65,21 @@ export async function getTasks(req, res) {
         .populate("assignedTo", "username fullName avatar")
         .sort({ createdAt: -1 });
     return respond(res, tasks, "Tasks fetched");
+}
+
+// Decision: scoped by current membership as well as by assignee, so a task
+// assigned before someone left a project never surfaces through this route.
+export async function getMyTasks(req, res) {
+    const projectIds = await ProjectMember.distinct("project", {
+        user: req.user._id,
+    });
+    const tasks = await Task.find({
+        assignedTo: req.user._id,
+        project: { $in: projectIds },
+    })
+        .populate("project", "name")
+        .sort({ dueDate: 1, createdAt: -1 });
+    return respond(res, tasks, "Your tasks fetched");
 }
 
 export async function createTask(req, res) {
