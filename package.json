@@ -11,7 +11,7 @@
         "dev": "node --watch src/index.js",
         "start": "node src/index.js",
         "test": "npm run test:unit",
-        "test:unit": "node --test src/utils/tokens.test.js src/utils/storage.test.js src/utils/verification-link.test.js src/middlewares/error.middleware.test.js",
+        "test:unit": "node --test src/utils/tokens.test.js src/utils/storage.test.js src/utils/verification-link.test.js src/middlewares/error.middleware.test.js src/utils/mail.test.js",
         "verify": "node scripts/verify.mjs",
         "seed": "node scripts/seed-demo.mjs",
         "lint": "oxlint --deny-warnings src scripts",
