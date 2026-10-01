@@ -21,6 +21,7 @@ for (const name of ["SERVER_URL", "MONGO_URI"]) {
 const BASE = `${process.env.SERVER_URL}/api/v1`;
 const STAMP = Date.now();
 const PASSWORD = "Passw0rd!";
+const DEMO_EMAIL = "verify-demo@test.local";
 
 const created = { users: [], projects: [], tasks: [], files: [], avatars: [] };
 
@@ -961,6 +962,63 @@ test("API end to end", async (t) => {
                     token: member.accessToken,
                 });
                 assert.equal(me.data.avatar.url, secondUrl);
+            },
+        );
+
+        await t.test(
+            "a shared demo account cannot be locked or defaced",
+            {
+                skip: !process.env.DEMO_EMAILS?.includes(DEMO_EMAIL)
+                    ? `set DEMO_EMAILS=${DEMO_EMAIL} on the server and here`
+                    : false,
+            },
+            async () => {
+                // A fixed address, so the server's DEMO_EMAILS can name it.
+                // A run that died before cleanup leaves it behind: reuse it.
+                const registered = await post("/auth/register", undefined, {
+                    email: DEMO_EMAIL,
+                    username: "verifydemo",
+                    password: PASSWORD,
+                });
+                if (registered.status === 201) {
+                    created.users.push(registered.data.user._id);
+                }
+                const session = expectStatus(
+                    await post("/auth/login", undefined, {
+                        email: DEMO_EMAIL,
+                        password: PASSWORD,
+                    }),
+                    200,
+                ).data;
+                if (registered.status !== 201) {
+                    created.users.push(session.user._id);
+                }
+                const token = session.accessToken;
+
+                expectStatus(
+                    await post("/auth/change-password", token, {
+                        oldPassword: PASSWORD,
+                        newPassword: "Hijacked1!",
+                    }),
+                    403,
+                );
+                expectStatus(
+                    await patch("/auth/profile", token, {
+                        fullName: "Mallory",
+                    }),
+                    403,
+                );
+                expectStatus(
+                    await api("/auth/avatar", {
+                        method: "PATCH",
+                        token,
+                        form: formWith("avatar", png(32), "x.png"),
+                    }),
+                    403,
+                );
+
+                // Everything else works: it is a real account.
+                await createProject(token, `Verify demo ${STAMP}`);
             },
         );
 

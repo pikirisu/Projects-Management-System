@@ -13,7 +13,10 @@ import {
     updateProfile,
     verifyEmail,
 } from "../controllers/auth.controllers.js";
-import { verifyJWT } from "../middlewares/auth.middleware.js";
+import {
+    notForDemoAccounts,
+    verifyJWT,
+} from "../middlewares/auth.middleware.js";
 import { uploadAvatar } from "../middlewares/multer.middleware.js";
 import { authLimiter } from "../middlewares/rate-limit.middleware.js";
 import {
@@ -48,11 +51,24 @@ router.post(
 // Signed in.
 router.get("/current-user", verifyJWT, getCurrentUser);
 router.post("/logout", verifyJWT, logoutUser);
-router.patch("/profile", verifyJWT, profileRules, updateProfile);
-router.patch("/avatar", verifyJWT, uploadAvatar, updateAvatar);
+router.patch(
+    "/profile",
+    verifyJWT,
+    notForDemoAccounts,
+    profileRules,
+    updateProfile,
+);
+router.patch(
+    "/avatar",
+    verifyJWT,
+    notForDemoAccounts,
+    uploadAvatar,
+    updateAvatar,
+);
 router.post(
     "/change-password",
     verifyJWT,
+    notForDemoAccounts,
     changePasswordRules,
     changeCurrentPassword,
 );

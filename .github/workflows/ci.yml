@@ -37,6 +37,8 @@ jobs:
       # verify.mjs makes several auth calls per run and would otherwise exhaust
       # the auth budget mid-suite.
       RATE_LIMIT_ENABLED: false
+      # Lets the suite prove a shared demo account cannot be locked.
+      DEMO_EMAILS: verify-demo@test.local
 
     steps:
       - uses: actions/checkout@v4

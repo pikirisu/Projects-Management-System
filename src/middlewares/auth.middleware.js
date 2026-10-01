@@ -23,6 +23,25 @@ export async function verifyJWT(req, res, next) {
     next();
 }
 
+const demoEmails = () =>
+    (process.env.DEMO_EMAILS ?? "")
+        .split(",")
+        .map((email) => email.trim().toLowerCase())
+        .filter(Boolean);
+
+// Decision: the demo accounts are shared by every visitor, so no visitor may
+// lock out or deface them for the next one. Their password, photo and name are
+// fixed; everything else they touch is restored by the nightly reset.
+export function notForDemoAccounts(req, res, next) {
+    if (demoEmails().includes(req.user.email)) {
+        throw new ApiError(
+            403,
+            "The demo account is shared, so its sign-in and profile stay as they are. Create your own account to try this.",
+        );
+    }
+    next();
+}
+
 /**
  * Resolves the caller's role on :projectId into `req.projectRole` and refuses
  * anyone whose role is not in `roles`.

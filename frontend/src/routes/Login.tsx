@@ -9,24 +9,40 @@ import { Alert, Button, Field, PasswordField } from "../components/ui";
 const linkClass =
     "font-medium text-indigo-600 hover:underline dark:text-indigo-400";
 
+interface Credentials {
+    email: string;
+    password: string;
+}
+
+/** The public demo account, when this build was given one. */
+function demoCredentials(): Credentials | null {
+    const email = import.meta.env.VITE_DEMO_EMAIL;
+    const password = import.meta.env.VITE_DEMO_PASSWORD;
+    return email && password ? { email, password } : null;
+}
+
 export function Login() {
     const { login, sessionExpired } = useAuth();
     const navigate = useNavigate();
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
+    const demo = demoCredentials();
 
     const signIn = useMutation({
-        mutationFn: () => login(email, password),
+        mutationFn: (credentials: Credentials) =>
+            login(credentials.email, credentials.password),
         onSuccess: () => void navigate("/projects", { replace: true }),
     });
     const apiError = asApiError(signIn.error);
     const error = signIn.isError
         ? (apiError?.message ?? "Something went wrong. Try again.")
         : null;
+    const signingInAsDemo =
+        signIn.isPending && signIn.variables?.email === demo?.email;
 
     function handleSubmit(event: FormEvent) {
         event.preventDefault();
-        signIn.mutate();
+        signIn.mutate({ email, password });
     }
 
     return (
@@ -90,12 +106,31 @@ export function Login() {
 
                 <Button
                     type="submit"
-                    loading={signIn.isPending}
+                    loading={signIn.isPending && !signingInAsDemo}
+                    disabled={signingInAsDemo}
                     className="w-full"
                 >
                     Sign in
                 </Button>
             </form>
+
+            {demo && (
+                <div className="mt-6 border-t border-hairline pt-6">
+                    <Button
+                        variant="secondary"
+                        className="w-full"
+                        loading={signingInAsDemo}
+                        disabled={signIn.isPending && !signingInAsDemo}
+                        onClick={() => signIn.mutate(demo)}
+                    >
+                        Try the demo
+                    </Button>
+                    <p className="mt-2 text-center text-xs text-muted">
+                        Signs in as an admin of two sample projects. Changes
+                        reset nightly.
+                    </p>
+                </div>
+            )}
         </AuthShell>
     );
 }

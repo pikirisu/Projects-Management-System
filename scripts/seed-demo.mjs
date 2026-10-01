@@ -212,6 +212,23 @@ async function seedProject(spec, owner, teammate) {
     return id;
 }
 
+/** Deletes every project any of `accounts` is an admin of. */
+async function clearProjects(accounts) {
+    for (const account of accounts) {
+        const { data: entries } = await api("/projects", {
+            token: account.token,
+        });
+        for (const { project, role } of entries) {
+            if (role !== "admin") continue;
+            await api(`/projects/${project._id}`, {
+                method: "DELETE",
+                token: account.token,
+            });
+        }
+    }
+    console.log("✔ cleared the previous demo workspace");
+}
+
 async function main() {
     const owner = await ensureAccount(ACCOUNTS.owner);
     const teammate = await ensureAccount(ACCOUNTS.teammate);
@@ -219,17 +236,15 @@ async function main() {
 
     const { data: existing } = await api("/projects", { token: owner.token });
     const demoNames = new Set(PROJECTS.map((spec) => spec.name));
-    const found = existing.filter((entry) => demoNames.has(entry.project.name));
+    const seeded = existing.some((entry) => demoNames.has(entry.project.name));
 
-    if (found.length > 0 && !RESET) {
+    if (seeded && !RESET) {
         console.log("✔ demo workspace already exists (--reset rebuilds it)");
     } else {
-        for (const entry of found) {
-            await api(`/projects/${entry.project._id}`, {
-                method: "DELETE",
-                token: owner.token,
-            });
-        }
+        // A reset clears every project either demo account administers, not
+        // just the seeded ones: visitors sign in as these accounts, and what
+        // they create (or the admin they hand a project to) must not pile up.
+        if (RESET) await clearProjects([owner, teammate]);
         for (const spec of PROJECTS) {
             await seedProject(spec, owner, teammate);
             console.log(`✔ ${spec.name}: ${spec.tasks.length} tasks`);
