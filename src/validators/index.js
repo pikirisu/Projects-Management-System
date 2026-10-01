@@ -25,6 +25,13 @@ const password = (field, label = "Password") =>
         .notEmpty()
         .withMessage(`${label} is required`);
 
+/** Only passwords being set are held to a minimum, never one being checked. */
+const newPassword = (field, label) =>
+    password(field, label)
+        .bail()
+        .isLength({ min: 8 })
+        .withMessage(`${label} must be at least 8 characters`);
+
 const title = ({ optional }) =>
     optional
         ? body("title")
@@ -47,7 +54,7 @@ export const registerRules = rules(
         .withMessage("Username must be lowercase")
         .isLength({ min: 3 })
         .withMessage("Username must be at least 3 characters"),
-    password("password"),
+    newPassword("password", "Password"),
     body("fullName").optional().trim(),
 );
 
@@ -55,11 +62,11 @@ export const loginRules = rules(email(), password("password"));
 
 export const forgotPasswordRules = rules(email());
 
-export const resetPasswordRules = rules(password("newPassword"));
+export const resetPasswordRules = rules(newPassword("newPassword", "Password"));
 
 export const changePasswordRules = rules(
     password("oldPassword", "Current password"),
-    password("newPassword", "New password"),
+    newPassword("newPassword", "New password"),
 );
 
 export const profileRules = rules(
@@ -98,8 +105,9 @@ const taskRules = ({ optional }) =>
             .optional()
             .isIn(TASK_STATUSES)
             .withMessage("Status is invalid"),
+        // Empty (null or "") is allowed: it clears the assignee.
         body("assignedTo")
-            .optional()
+            .optional({ values: "falsy" })
             .isMongoId()
             .withMessage("Assignee is invalid"),
     );

@@ -221,5 +221,12 @@ export async function deleteMember(req, res) {
         );
     }
 
+    // Decision: someone who leaves a project leaves its tasks too, so every
+    // assignee remains someone who can open the task assigned to them.
+    await Task.updateMany(
+        { project: projectId, assignedTo: userId },
+        { $unset: { assignedTo: 1 } },
+    );
+
     return respond(res, member, "Member removed");
 }

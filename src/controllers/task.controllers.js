@@ -14,13 +14,20 @@ import { deleteStoredFiles, saveUpload } from "../utils/storage.js";
 
 const TASK_FIELDS = ["title", "description", "status", "assignedTo"];
 
-/** The task fields present in a request body, ready for $set. */
+/**
+ * Splits a request body into $set and $unset. An empty value (null, or "" from
+ * a multipart form) clears the field: that is how a task is unassigned.
+ */
 function taskChanges(body) {
     const $set = {};
+    const $unset = {};
     for (const field of TASK_FIELDS) {
-        if (body[field] !== undefined) $set[field] = body[field];
+        const value = body[field];
+        if (value === undefined) continue;
+        if (value === null || value === "") $unset[field] = 1;
+        else $set[field] = value;
     }
-    return { $set };
+    return { $set, $unset };
 }
 
 // Decision: an assignee must be a member of the project, or they would own a
@@ -94,12 +101,12 @@ export async function getTaskById(req, res) {
 
 export async function updateTask(req, res) {
     const { projectId, taskId } = req.params;
-    const { $set } = taskChanges(req.body);
+    const { $set, $unset } = taskChanges(req.body);
     await assertAssigneeIsMember($set.assignedTo, projectId);
 
     // New files are appended; removing one is deleteTaskAttachment's job.
     const attachments = await uploadAll(req.files);
-    const update = { $set };
+    const update = { $set, $unset };
     if (attachments.length > 0) {
         update.$push = { attachments: { $each: attachments } };
     }
