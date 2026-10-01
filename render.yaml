@@ -1,0 +1,67 @@
+# Render Blueprint for the API. In Render: New > Blueprint, then pick this
+# repository. Values marked `sync: false` are asked for once, in the dashboard;
+# the two JWT secrets are generated for you.
+services:
+  - type: web
+    name: project-camp-api
+    runtime: node
+    plan: free
+    # Nearest to India. Keep it in, or close to, the Atlas cluster's region.
+    region: singapore
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    # Answers 503 until MongoDB is connected, so a broken deploy never goes live.
+    healthCheckPath: /api/v1/healthcheck
+    # Deploy a commit only once its GitHub CI checks have passed.
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      # Render puts one proxy in front of the service; rate limiting needs the
+      # client's IP from behind it.
+      - key: TRUST_PROXY
+        value: "1"
+      - key: ACCESS_TOKEN_SECRET
+        generateValue: true
+      - key: REFRESH_TOKEN_SECRET
+        generateValue: true
+      # Short-lived access tokens: the client renews them without a prompt.
+      - key: ACCESS_TOKEN_EXPIRY
+        value: 15m
+      - key: REFRESH_TOKEN_EXPIRY
+        value: 7d
+      - key: RATE_LIMIT_ENABLED
+        value: "true"
+      # The accounts scripts/seed-demo.mjs creates; see "Try the demo".
+      - key: DEMO_EMAILS
+        value: demo.owner@example.com,demo.teammate@example.com
+
+      # ---- asked for once, in the dashboard --------------------------------
+      - key: MONGO_URI
+        sync: false
+      # This service's own URL, e.g. https://project-camp-api.onrender.com
+      - key: SERVER_URL
+        sync: false
+      # The client's URL on Vercel, e.g. https://project-camp.vercel.app
+      - key: CORS_ORIGIN
+        sync: false
+      - key: APP_URL
+        sync: false
+      # <client URL>/reset-password and <client URL>/verify-email
+      - key: FORGOT_PASSWORD_REDIRECT_URL
+        sync: false
+      - key: EMAIL_VERIFICATION_REDIRECT_URL
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      # A sender address verified in Brevo.
+      - key: MAIL_FROM
+        sync: false
