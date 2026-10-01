@@ -1,16 +1,17 @@
 import type { ReactNode } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "./context/auth";
-import { Layout } from "./components/Layout";
-import { Login } from "./routes/Login";
-import { Register } from "./routes/Register";
-import { Projects } from "./routes/Projects";
+import { AppShell } from "./components/AppShell";
+import { Spinner } from "./components/ui";
 import { Account } from "./routes/Account";
-import { ProjectDetail } from "./routes/ProjectDetail";
 import { ForgotPassword } from "./routes/ForgotPassword";
+import { Login } from "./routes/Login";
+import { MyTasks } from "./routes/MyTasks";
+import { ProjectDetail } from "./routes/ProjectDetail";
+import { Projects } from "./routes/Projects";
+import { Register } from "./routes/Register";
 import { ResetPassword } from "./routes/ResetPassword";
 import { VerifyEmail } from "./routes/VerifyEmail";
-import { Spinner } from "./components/ui";
 
 function FullPageSpinner() {
     return (
@@ -20,23 +21,20 @@ function FullPageSpinner() {
     );
 }
 
-/*
- * Both guards wait out the "loading" status rather than treating it as signed
- * out. Without that, every reload would bounce an authenticated user to /login
- * for the moment it takes to restore the session from the refresh token.
- */
+// Both guards wait out "loading" instead of treating it as signed out, or a
+// reload would bounce a signed-in user to /login while the session restores.
 function RequireAuth({ children }: { children: ReactNode }) {
     const { status } = useAuth();
     if (status === "loading") return <FullPageSpinner />;
     if (status === "anonymous") return <Navigate to="/login" replace />;
-    return <>{children}</>;
+    return children;
 }
 
-function RedirectIfSignedIn({ children }: { children: ReactNode }) {
+function SignedOutOnly({ children }: { children: ReactNode }) {
     const { status } = useAuth();
     if (status === "loading") return <FullPageSpinner />;
     if (status === "authenticated") return <Navigate to="/projects" replace />;
-    return <>{children}</>;
+    return children;
 }
 
 export function App() {
@@ -45,57 +43,45 @@ export function App() {
             <Route
                 path="/login"
                 element={
-                    <RedirectIfSignedIn>
+                    <SignedOutOnly>
                         <Login />
-                    </RedirectIfSignedIn>
+                    </SignedOutOnly>
                 }
             />
             <Route
                 path="/register"
                 element={
-                    <RedirectIfSignedIn>
+                    <SignedOutOnly>
                         <Register />
-                    </RedirectIfSignedIn>
+                    </SignedOutOnly>
                 }
             />
-            {/*
-             * The reset link in the email is built from
-             * FORGOT_PASSWORD_REDIRECT_URL + "/" + token, so this path has to
-             * match that env var. Without the route the catch-all below would
-             * swallow the token and bounce the user to /login.
-             */}
             <Route
                 path="/forgot-password"
                 element={
-                    <RedirectIfSignedIn>
+                    <SignedOutOnly>
                         <ForgotPassword />
-                    </RedirectIfSignedIn>
+                    </SignedOutOnly>
                 }
             />
-            {/*
-             * Not wrapped in RedirectIfSignedIn, unlike the others. A stale
-             * session restored from localStorage would otherwise bounce this
-             * away and discard the token -- and someone who still has a session
-             * on this device is exactly the person who can have forgotten the
-             * password they set on another one. The token is the authorization
-             * here, not the session.
-             */}
-            <Route path="/reset-password/:token" element={<ResetPassword />} />
 
             {/*
-             * Also public and also unguarded, for the same reason: the link
-             * arrives by email and has to work whatever this browser's session
-             * happens to be. EMAIL_VERIFICATION_REDIRECT_URL points here.
+             * Decision: the two emailed links are reachable whatever this
+             * browser's session is. The token in the URL is the authorization,
+             * and someone still signed in on this device is exactly who may have
+             * forgotten the password they set on another one.
              */}
+            <Route path="/reset-password/:token" element={<ResetPassword />} />
             <Route path="/verify-email/:token" element={<VerifyEmail />} />
 
             <Route
                 element={
                     <RequireAuth>
-                        <Layout />
+                        <AppShell />
                     </RequireAuth>
                 }
             >
+                <Route path="/my-tasks" element={<MyTasks />} />
                 <Route path="/projects" element={<Projects />} />
                 <Route
                     path="/projects/:projectId"

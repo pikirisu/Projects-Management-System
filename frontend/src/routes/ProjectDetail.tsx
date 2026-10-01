@@ -1,89 +1,83 @@
-import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { api, ApiError } from "../lib/api";
-import { formatDate } from "../lib/display";
-import {
-    ROLE_LABELS,
-    type Note,
-    type Project,
-    type ProjectMemberEntry,
-    type Role,
-    type Task,
-} from "../lib/types";
+import { useMemo, useState } from "react";
+import { Link, useParams, useSearchParams } from "react-router-dom";
+import { ChevronRight } from "lucide-react";
 import { useAuth } from "../context/auth";
-import { Alert, Badge, Spinner, Tabs } from "../components/ui";
-import { TasksPanel } from "../components/project/TasksPanel";
-import { NotesPanel } from "../components/project/NotesPanel";
+import { ProjectContext } from "../context/project";
+import { errorMessage } from "../lib/api";
+import { formatDate, projectColor } from "../lib/display";
+import { permissionsFor } from "../lib/permissions";
+import { useMembers, useNotes, useProject, useTasks } from "../lib/queries";
+import { ROLE_LABELS, type TaskCounts } from "../lib/types";
 import { MembersPanel } from "../components/project/MembersPanel";
+import { NotesPanel } from "../components/project/NotesPanel";
+import { ProjectProgress } from "../components/project/ProjectProgress";
 import { ProjectSettings } from "../components/project/ProjectSettings";
+import { TaskDetail } from "../components/project/TaskDetail";
+import { TasksPanel } from "../components/project/TasksPanel";
+import { Alert, AvatarStack, Badge, Skeleton, Tabs } from "../components/ui";
 
 type TabKey = "tasks" | "notes" | "members" | "settings";
 
-/**
- * What the current user may do here. The server enforces all of it in
- * validateProjectPermission; this only decides what the UI bothers to offer,
- * so a stale value costs a 403 rather than unauthorized access.
- */
-export interface Permissions {
-    manageTasks: boolean;
-    manageProject: boolean;
-}
-
-export function permissionsFor(role: Role | null): Permissions {
-    return {
-        manageTasks: role === "admin" || role === "project_admin",
-        manageProject: role === "admin",
-    };
-}
-
-function errorMessage(error: unknown, fallback: string) {
-    return error instanceof ApiError ? error.message : fallback;
+function Breadcrumb({ name }: { name?: string }) {
+    return (
+        <nav
+            aria-label="Breadcrumb"
+            className="flex items-center gap-1 text-sm text-muted"
+        >
+            <Link to="/projects" className="hover:text-strong">
+                Projects
+            </Link>
+            {name && (
+                <>
+                    <ChevronRight
+                        className="size-3.5 text-faint"
+                        aria-hidden="true"
+                    />
+                    <span className="truncate text-strong">{name}</span>
+                </>
+            )}
+        </nav>
+    );
 }
 
 export function ProjectDetail() {
     const { projectId = "" } = useParams();
+    const [searchParams, setSearchParams] = useSearchParams();
     const { user } = useAuth();
     const [tab, setTab] = useState<TabKey>("tasks");
 
-    const projectQuery = useQuery({
-        queryKey: ["project", projectId],
-        queryFn: () => api.get<Project>(`/projects/${projectId}`),
-    });
+    const projectQuery = useProject(projectId);
+    // The member list is also the source of the caller's own role: it is
+    // needed anyway for assignees, and unlike the cached project list it is
+    // never stale after an admin changes someone's role.
+    const membersQuery = useMembers(projectId);
+    const tasksQuery = useTasks(projectId);
+    const notesQuery = useNotes(projectId);
 
-    /*
-     * The members list doubles as the source of the caller's own role: no
-     * endpoint returns "my role on this project" directly, and the cached
-     * /projects entry goes stale the moment an admin changes it. This list is
-     * needed anyway for the assignee picker, so reading the role from it is
-     * free and always current.
-     */
-    const membersQuery = useQuery({
-        queryKey: ["project", projectId, "members"],
-        queryFn: () =>
-            api.get<ProjectMemberEntry[]>(`/projects/${projectId}/members`),
-    });
-
-    const tasksQuery = useQuery({
-        queryKey: ["project", projectId, "tasks"],
-        queryFn: () => api.get<Task[]>(`/tasks/${projectId}`),
-    });
-
-    const notesQuery = useQuery({
-        queryKey: ["project", projectId, "notes"],
-        queryFn: () => api.get<Note[]>(`/notes/${projectId}`),
-    });
-
+    const members = membersQuery.data;
     const myRole =
-        membersQuery.data?.find((entry) => entry.user._id === user?._id)
-            ?.role ?? null;
-    const can = permissionsFor(myRole);
+        members?.find((entry) => entry.user._id === user?._id)?.role ?? null;
+
+    // A task's slide-over is driven by ?task=, so a task has a shareable URL
+    // and My tasks can link straight to one.
+    const openTaskId = searchParams.get("task");
+
+    const context = useMemo(
+        () => ({
+            projectId,
+            can: permissionsFor(myRole),
+            members: members ?? [],
+            openTask: (taskId: string) => setSearchParams({ task: taskId }),
+        }),
+        [projectId, myRole, members, setSearchParams],
+    );
 
     if (projectQuery.isPending) {
         return (
-            <div className="flex items-center gap-2 py-12 text-sm text-muted">
-                <Spinner />
-                Loading project…
+            <div className="space-y-4">
+                <Breadcrumb />
+                <Skeleton className="h-8 w-64" />
+                <Skeleton className="h-4 w-96 max-w-full" />
             </div>
         );
     }
@@ -91,12 +85,7 @@ export function ProjectDetail() {
     if (projectQuery.error || !projectQuery.data) {
         return (
             <div className="space-y-4">
-                <Link
-                    to="/projects"
-                    className="text-sm text-indigo-600 hover:underline dark:text-indigo-400"
-                >
-                    ← All projects
-                </Link>
+                <Breadcrumb />
                 <Alert>
                     {errorMessage(
                         projectQuery.error,
@@ -109,106 +98,130 @@ export function ProjectDetail() {
 
     const project = projectQuery.data;
     const created = formatDate(project.createdAt);
+    const counts: TaskCounts = {};
+    for (const task of tasksQuery.data ?? []) {
+        counts[task.status] = (counts[task.status] ?? 0) + 1;
+    }
 
     return (
-        <div className="space-y-6">
-            <div>
-                <Link
-                    to="/projects"
-                    className="text-sm text-indigo-600 hover:underline dark:text-indigo-400"
-                >
-                    ← All projects
-                </Link>
+        <ProjectContext value={context}>
+            <div className="space-y-6">
+                <div className="space-y-4">
+                    <Breadcrumb name={project.name} />
 
-                <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-3">
-                            <h1 className="text-display text-strong">
-                                {project.name}
-                            </h1>
-                            {myRole && (
-                                <Badge
-                                    tone={
-                                        myRole === "member"
-                                            ? "neutral"
-                                            : "accent"
-                                    }
-                                >
-                                    {ROLE_LABELS[myRole]}
-                                </Badge>
+                    <div className="flex flex-wrap items-start justify-between gap-x-8 gap-y-4">
+                        <div className="min-w-0 space-y-1.5">
+                            <div className="flex flex-wrap items-center gap-3">
+                                <span
+                                    aria-hidden="true"
+                                    className="size-3 rounded"
+                                    style={{
+                                        backgroundColor: projectColor(
+                                            project._id,
+                                        ),
+                                    }}
+                                />
+                                <h1 className="text-display text-strong">
+                                    {project.name}
+                                </h1>
+                                {myRole && (
+                                    <Badge
+                                        tone={
+                                            myRole === "member"
+                                                ? "neutral"
+                                                : "accent"
+                                        }
+                                    >
+                                        {ROLE_LABELS[myRole]}
+                                    </Badge>
+                                )}
+                            </div>
+                            <p className="max-w-2xl text-sm text-muted">
+                                {project.description || "No description"}
+                            </p>
+                        </div>
+
+                        <div className="flex items-center gap-6">
+                            {members && (
+                                <AvatarStack
+                                    users={members.map((entry) => entry.user)}
+                                />
+                            )}
+                            {tasksQuery.data && (
+                                <ProjectProgress
+                                    counts={counts}
+                                    className="w-44"
+                                />
                             )}
                         </div>
-                        <p className="mt-1.5 text-sm text-muted">
-                            {project.description || "No description"}
-                        </p>
-                        {created && (
-                            <p className="mt-1 text-xs text-faint">
-                                Created {created}
-                            </p>
-                        )}
                     </div>
+                    {created && (
+                        <p className="text-xs text-faint">Created {created}</p>
+                    )}
                 </div>
+
+                <Tabs
+                    value={tab}
+                    onChange={setTab}
+                    tabs={[
+                        {
+                            value: "tasks",
+                            label: "Tasks",
+                            count: tasksQuery.data?.length,
+                        },
+                        {
+                            value: "notes",
+                            label: "Notes",
+                            count: notesQuery.data?.length,
+                        },
+                        {
+                            value: "members",
+                            label: "Members",
+                            count: members?.length,
+                        },
+                        ...(context.can.manageProject
+                            ? [
+                                  {
+                                      value: "settings" as const,
+                                      label: "Settings",
+                                  },
+                              ]
+                            : []),
+                    ]}
+                />
+
+                {tab === "tasks" && (
+                    <TasksPanel
+                        tasks={tasksQuery.data}
+                        isPending={tasksQuery.isPending}
+                        error={tasksQuery.error}
+                    />
+                )}
+                {tab === "notes" && (
+                    <NotesPanel
+                        notes={notesQuery.data}
+                        isPending={notesQuery.isPending}
+                        error={notesQuery.error}
+                    />
+                )}
+                {tab === "members" && (
+                    <MembersPanel
+                        isPending={membersQuery.isPending}
+                        error={membersQuery.error}
+                    />
+                )}
+                {tab === "settings" && context.can.manageProject && (
+                    <ProjectSettings project={project} />
+                )}
             </div>
 
-            <Tabs
-                value={tab}
-                onChange={setTab}
-                tabs={[
-                    {
-                        value: "tasks",
-                        label: "Tasks",
-                        count: tasksQuery.data?.length,
-                    },
-                    {
-                        value: "notes",
-                        label: "Notes",
-                        count: notesQuery.data?.length,
-                    },
-                    {
-                        value: "members",
-                        label: "Members",
-                        count: membersQuery.data?.length,
-                    },
-                    ...(can.manageProject
-                        ? [{ value: "settings" as const, label: "Settings" }]
-                        : []),
-                ]}
-            />
-
-            {tab === "tasks" && (
-                <TasksPanel
-                    projectId={projectId}
-                    can={can}
-                    members={membersQuery.data ?? []}
-                    tasks={tasksQuery.data}
-                    isPending={tasksQuery.isPending}
-                    error={tasksQuery.error}
+            {openTaskId && (
+                <TaskDetail
+                    key={openTaskId}
+                    taskId={openTaskId}
+                    onClose={() => setSearchParams({})}
                 />
             )}
-
-            {tab === "notes" && (
-                <NotesPanel
-                    projectId={projectId}
-                    can={can}
-                    notes={notesQuery.data}
-                    isPending={notesQuery.isPending}
-                    error={notesQuery.error}
-                />
-            )}
-
-            {tab === "members" && (
-                <MembersPanel
-                    projectId={projectId}
-                    can={can}
-                    members={membersQuery.data}
-                    isPending={membersQuery.isPending}
-                    error={membersQuery.error}
-                />
-            )}
-
-            {tab === "settings" && can.manageProject && (
-                <ProjectSettings project={project} />
-            )}
-        </div>
+        </ProjectContext>
     );
 }

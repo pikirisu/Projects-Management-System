@@ -1,33 +1,29 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
-import { api, ApiError } from "../lib/api";
+import { api, asApiError } from "../lib/api";
+import { PASSWORD_MIN_LENGTH } from "../lib/constants";
 import { AuthShell } from "../components/AuthShell";
 import { Alert, Button, Field } from "../components/ui";
 
-/*
- * This route exists because the reset email points at it: the API builds the
- * link from FORGOT_PASSWORD_REDIRECT_URL, which is a frontend URL ending in
- * /reset-password, plus the unhashed token. The token never leaves the URL --
- * it is posted straight back and is single-use, so there is nothing to store.
- */
+/** The page the reset email links to: FORGOT_PASSWORD_REDIRECT_URL/:token. */
 export function ResetPassword() {
     const { token = "" } = useParams();
     const navigate = useNavigate();
-
     const [password, setPassword] = useState("");
     const [confirmation, setConfirmation] = useState("");
 
-    const mutation = useMutation({
+    const reset = useMutation({
         mutationFn: (newPassword: string) =>
             api.post(`/auth/reset-password/${token}`, { newPassword }),
     });
+    const error = asApiError(reset.error);
 
-    const error = mutation.error instanceof ApiError ? mutation.error : null;
-
-    // Checked here rather than server-side because the API takes a single
-    // password field; the confirmation exists only to catch a typo that would
-    // otherwise lock the user out again with a password they cannot reproduce.
+    const tooShort =
+        password.length > 0 && password.length < PASSWORD_MIN_LENGTH
+            ? `Use at least ${PASSWORD_MIN_LENGTH} characters`
+            : undefined;
+    // The API takes one password; the confirmation only catches a typo.
     const mismatch =
         confirmation.length > 0 && password !== confirmation
             ? "Passwords do not match"
@@ -35,11 +31,10 @@ export function ResetPassword() {
 
     function handleSubmit(event: FormEvent) {
         event.preventDefault();
-        if (mismatch) return;
-        mutation.mutate(password);
+        if (!tooShort && !mismatch) reset.mutate(password);
     }
 
-    if (mutation.isSuccess) {
+    if (reset.isSuccess) {
         return (
             <AuthShell
                 title="Password updated"
@@ -74,7 +69,6 @@ export function ResetPassword() {
         >
             <form onSubmit={handleSubmit} className="space-y-4" noValidate>
                 {error && <Alert>{error.message}</Alert>}
-
                 <Field
                     label="New password"
                     name="newPassword"
@@ -84,9 +78,9 @@ export function ResetPassword() {
                     autoFocus
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
-                    error={error?.fieldErrors.newPassword}
+                    hint={`At least ${PASSWORD_MIN_LENGTH} characters.`}
+                    error={tooShort ?? error?.fieldErrors.newPassword}
                 />
-
                 <Field
                     label="Confirm new password"
                     name="confirmPassword"
@@ -97,11 +91,15 @@ export function ResetPassword() {
                     onChange={(event) => setConfirmation(event.target.value)}
                     error={mismatch}
                 />
-
                 <Button
                     type="submit"
-                    loading={mutation.isPending}
-                    disabled={!password || !confirmation || Boolean(mismatch)}
+                    loading={reset.isPending}
+                    disabled={
+                        !password ||
+                        !confirmation ||
+                        Boolean(tooShort) ||
+                        Boolean(mismatch)
+                    }
                     className="w-full"
                 >
                     Set new password

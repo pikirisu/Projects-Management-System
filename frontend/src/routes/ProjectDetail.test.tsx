@@ -1,4 +1,5 @@
 import { Route, Routes } from "react-router-dom";
+import { Toaster } from "sonner";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -96,13 +97,7 @@ function stubQueries(myRole: Role) {
                     title: "Migrate the blog",
                     description: "412 posts, plus redirects.",
                     attachments: [
-                        {
-                            _id: "att-1",
-                            url: "/images/spec.pdf",
-                            size: 2048,
-                            provider: "local",
-                            key: "spec.pdf",
-                        },
+                        { _id: "att-1", url: "/images/spec.pdf", size: 2048 },
                     ],
                     subtasks: [
                         {
@@ -446,9 +441,107 @@ describe("ProjectDetail", () => {
         await waitFor(() => expect(post).toHaveBeenCalled());
         const [path, body] = post.mock.calls[0]!;
         expect(path).toBe("/tasks/project-1");
-        expect(body).toMatchObject({ title: "New thing", status: "todo" });
-        // An empty assignee must be omitted: "" fails the isMongoId validator.
-        expect(body).not.toHaveProperty("assignedTo");
+        expect(body).toMatchObject({
+            title: "New thing",
+            status: "todo",
+            priority: "medium",
+            // Nobody picked: sent as null, which the server reads as "none".
+            assignedTo: null,
+            dueDate: null,
+        });
+    });
+
+    it("opens the task named in the URL", async () => {
+        stubQueries("admin");
+        renderWithProviders(
+            <Routes>
+                <Route
+                    path="/projects/:projectId"
+                    element={<ProjectDetail />}
+                />
+            </Routes>,
+            { route: "/projects/project-1?task=t-todo" },
+        );
+
+        // A deep link is how My tasks, or a teammate, opens one task directly.
+        const panel = await screen.findByRole("dialog");
+        expect(
+            await within(panel).findByText("412 posts, plus redirects."),
+        ).toBeInTheDocument();
+        expect(get).toHaveBeenCalledWith("/tasks/project-1/t/t-todo");
+    });
+
+    it("says why when the server refuses a move", async () => {
+        stubQueries("admin");
+        put.mockRejectedValue(new ApiError(403, "Not allowed to move that"));
+        const user = userEvent.setup();
+        renderWithProviders(
+            <>
+                <Routes>
+                    <Route
+                        path="/projects/:projectId"
+                        element={<ProjectDetail />}
+                    />
+                </Routes>
+                <Toaster />
+            </>,
+            { route: "/projects/project-1" },
+        );
+
+        await user.selectOptions(
+            await screen.findByLabelText("Status for Migrate the blog"),
+            "done",
+        );
+
+        // The card snaps back, and the rollback is no longer silent.
+        expect(
+            await screen.findByText("Not allowed to move that"),
+        ).toBeInTheDocument();
+    });
+
+    it("lets a manager rename a subtask in place", async () => {
+        stubQueries("admin");
+        put.mockResolvedValue({});
+        const user = userEvent.setup();
+        renderPage();
+
+        await user.click(
+            await screen.findByRole("button", { name: "Migrate the blog" }),
+        );
+        const panel = await screen.findByRole("dialog");
+        await user.click(
+            within(panel).getByRole("button", {
+                name: "Rename subtask Export the posts",
+            }),
+        );
+
+        const input = within(panel).getByLabelText("Subtask title");
+        await user.clear(input);
+        await user.type(input, "Export every post{Enter}");
+
+        await waitFor(() =>
+            expect(put).toHaveBeenCalledWith("/tasks/project-1/st/s-1", {
+                title: "Export every post",
+            }),
+        );
+    });
+
+    it("offers a member no way to rename a subtask", async () => {
+        stubQueries("member");
+        const user = userEvent.setup();
+        renderPage();
+
+        await user.click(
+            await screen.findByRole("button", { name: "Migrate the blog" }),
+        );
+        const panel = await screen.findByRole("dialog");
+        // Ticking it off is still theirs to do.
+        expect(
+            within(panel).getByRole("checkbox", { name: "Export the posts" }),
+        ).toBeEnabled();
+        expect(
+            within(panel).queryByRole("button", { name: /^Rename subtask/ }),
+        ).not.toBeInTheDocument();
     });
 
     it("lets an admin manage every member, including themselves", async () => {

@@ -53,7 +53,11 @@ beforeEach(() => {
 
 async function fill(
     user: ReturnType<typeof userEvent.setup>,
-    { current = "Old1!", next = "New1!", confirm = "New1!" } = {},
+    {
+        current = "OldPassw0rd!",
+        next = "NewPassw0rd!",
+        confirm = "NewPassw0rd!",
+    } = {},
 ) {
     await user.type(screen.getByLabelText("Current password"), current);
     await user.type(screen.getByLabelText("New password"), next);
@@ -207,8 +211,8 @@ describe("Account", () => {
 
         await waitFor(() =>
             expect(post).toHaveBeenCalledWith("/auth/change-password", {
-                oldPassword: "Old1!",
-                newPassword: "New1!",
+                oldPassword: "OldPassw0rd!",
+                newPassword: "NewPassw0rd!",
             }),
         );
 
@@ -227,7 +231,7 @@ describe("Account", () => {
         const user = userEvent.setup();
         renderWithProviders(<Account />);
 
-        await fill(user, { confirm: "New2!" });
+        await fill(user, { confirm: "NewPassw0rd?" });
 
         expect(screen.getByText("Passwords do not match")).toBeInTheDocument();
         expect(
@@ -240,12 +244,26 @@ describe("Account", () => {
         const user = userEvent.setup();
         renderWithProviders(<Account />);
 
-        await fill(user, { next: "Old1!", confirm: "Old1!" });
+        await fill(user, { next: "OldPassw0rd!", confirm: "OldPassw0rd!" });
 
         expect(
             screen.getByText(
                 "Choose a password different from the current one",
             ),
+        ).toBeInTheDocument();
+        expect(
+            screen.getByRole("button", { name: "Change password" }),
+        ).toBeDisabled();
+    });
+
+    it("holds a new password to the server's minimum length", async () => {
+        const user = userEvent.setup();
+        renderWithProviders(<Account />);
+
+        await fill(user, { next: "short1!", confirm: "short1!" });
+
+        expect(
+            screen.getByText("Use at least 8 characters"),
         ).toBeInTheDocument();
         expect(
             screen.getByRole("button", { name: "Change password" }),

@@ -1,61 +1,49 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { useMutation } from "@tanstack/react-query";
 import { useAuth } from "../context/auth";
-import { ApiError } from "../lib/api";
+import { asApiError } from "../lib/api";
 import { AuthShell } from "../components/AuthShell";
 import { Alert, Button, Field } from "../components/ui";
+
+const linkClass =
+    "font-medium text-indigo-600 hover:underline dark:text-indigo-400";
 
 export function Login() {
     const { login, sessionExpired } = useAuth();
     const navigate = useNavigate();
-
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
-    const [submitting, setSubmitting] = useState(false);
-    const [error, setError] = useState<ApiError | null>(null);
 
-    async function handleSubmit(event: FormEvent) {
+    const signIn = useMutation({
+        mutationFn: () => login(email, password),
+        onSuccess: () => void navigate("/projects", { replace: true }),
+    });
+    const apiError = asApiError(signIn.error);
+    const error = signIn.isError
+        ? (apiError?.message ?? "Something went wrong. Try again.")
+        : null;
+
+    function handleSubmit(event: FormEvent) {
         event.preventDefault();
-        setSubmitting(true);
-        setError(null);
-        try {
-            await login(email, password);
-            navigate("/projects", { replace: true });
-        } catch (caught) {
-            setError(
-                caught instanceof ApiError
-                    ? caught
-                    : new ApiError(0, "Something went wrong. Try again."),
-            );
-        } finally {
-            setSubmitting(false);
-        }
+        signIn.mutate();
     }
 
     return (
         <AuthShell
             title="Sign in"
-            subtitle="Access your projects and tasks."
+            subtitle="Pick up where your team left off."
             footer={
                 <>
                     No account yet?{" "}
-                    <Link
-                        to="/register"
-                        className="font-medium text-indigo-600 hover:underline dark:text-indigo-400"
-                    >
+                    <Link to="/register" className={linkClass}>
                         Create one
                     </Link>
                 </>
             }
         >
             <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-                {/*
-                 * Shown when the app signed the user out rather than the user
-                 * doing it. A session that simply stops working is otherwise
-                 * indistinguishable from the app having lost their work, and
-                 * this is the only screen they are left on to explain it. It
-                 * gives way to a failed sign-in: that message is the newer news.
-                 */}
+                {/* The app signed them out, not they themselves: say why. */}
                 {sessionExpired && !error && (
                     <Alert tone="info">
                         Your session ended. This happens when a password is
@@ -65,12 +53,11 @@ export function Login() {
                 )}
 
                 {/*
-                 * Only the top-level message is shown for a failed sign-in. The
-                 * API deliberately answers 401 "Invalid credentials" for both an
-                 * unknown address and a wrong password, and attaching that to a
-                 * specific field would undo it by revealing which one existed.
+                 * Only the top-level message: the API answers "Invalid
+                 * credentials" for an unknown email and a wrong password alike,
+                 * and pinning it to one field would reveal which it was.
                  */}
-                {error && <Alert>{error.message}</Alert>}
+                {error && <Alert>{error}</Alert>}
 
                 <Field
                     label="Email"
@@ -80,7 +67,7 @@ export function Login() {
                     required
                     value={email}
                     onChange={(event) => setEmail(event.target.value)}
-                    error={error?.fieldErrors.email}
+                    error={apiError?.fieldErrors.email}
                 />
 
                 <div>
@@ -92,7 +79,7 @@ export function Login() {
                         required
                         value={password}
                         onChange={(event) => setPassword(event.target.value)}
-                        error={error?.fieldErrors.password}
+                        error={apiError?.fieldErrors.password}
                     />
                     <Link
                         to="/forgot-password"
@@ -102,7 +89,11 @@ export function Login() {
                     </Link>
                 </div>
 
-                <Button type="submit" loading={submitting} className="w-full">
+                <Button
+                    type="submit"
+                    loading={signIn.isPending}
+                    className="w-full"
+                >
                     Sign in
                 </Button>
             </form>

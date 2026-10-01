@@ -1,9 +1,22 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import {
+    useEffect,
+    useRef,
+    useState,
+    type FormEvent,
+    type ReactNode,
+} from "react";
 import { useMutation } from "@tanstack/react-query";
-import { api, ApiError } from "../lib/api";
+import { toast } from "sonner";
 import { useAuth } from "../context/auth";
+import { api, asApiError } from "../lib/api";
+import {
+    AVATAR_ACCEPT,
+    AVATAR_MAX_BYTES,
+    PASSWORD_MIN_LENGTH,
+} from "../lib/constants";
 import { displayName, formatDate, initials } from "../lib/display";
 import type { User } from "../lib/types";
+import { ThemeToggle } from "../components/ThemeToggle";
 import {
     Alert,
     Avatar,
@@ -12,56 +25,52 @@ import {
     Card,
     Field,
     FileInput,
+    PageHeader,
 } from "../components/ui";
 
-/** Matches the server's allowlist, so the file picker offers only what it takes. */
-const AVATAR_ACCEPT = "image/jpeg,image/png,image/gif,image/webp";
-const AVATAR_MAX_BYTES = 512 * 1000;
+/** A titled block of the settings page: what it is on the left, the form on the right. */
+function Section({
+    title,
+    description,
+    children,
+}: {
+    title: string;
+    description: string;
+    children: ReactNode;
+}) {
+    return (
+        <section className="grid gap-4 border-t border-hairline pt-8 md:grid-cols-[15rem_1fr] md:gap-10">
+            <div>
+                <h2 className="text-heading text-strong">{title}</h2>
+                <p className="mt-1 text-sm text-muted">{description}</p>
+            </div>
+            <Card className="p-5">{children}</Card>
+        </section>
+    );
+}
 
 function AvatarForm({ user }: { user: User }) {
     const { applyUser } = useAuth();
     const inputRef = useRef<HTMLInputElement>(null);
+    const previewRef = useRef<string | null>(null);
     const [file, setFile] = useState<File | null>(null);
     const [preview, setPreview] = useState<string | null>(null);
-    const [tooBig, setTooBig] = useState(false);
 
-    /*
-     * The preview is a blob URL, which the browser holds onto until it is
-     * revoked. It is derived in the change handler rather than an effect: the
-     * file being chosen is the event that produces it, and deriving it in an
-     * effect would set state during a render pass for no reason.
-     *
-     * The ref is how the previous URL is found in order to revoke it, since the
-     * state value is not readable from inside the next handler's closure.
-     * createObjectURL is guarded because jsdom does not implement it, and a
-     * missing preview is not worth failing a render over.
-     */
-    const previewRef = useRef<string | null>(null);
-
+    // The preview is a blob URL the browser holds until it is revoked.
+    // createObjectURL is guarded because jsdom does not implement it.
     function choose(chosen: File | null) {
         if (previewRef.current) URL.revokeObjectURL(previewRef.current);
-
         let next: string | null = null;
-        if (chosen) {
-            try {
-                next = URL.createObjectURL(chosen);
-            } catch {
-                next = null;
-            }
+        try {
+            next = chosen ? URL.createObjectURL(chosen) : null;
+        } catch {
+            next = null;
         }
-
         previewRef.current = next;
         setPreview(next);
         setFile(chosen);
-        // Checked here as well as on the server, so the answer is instant and
-        // costs nobody an upload.
-        // `chosen !== null` rather than Boolean(chosen): the latter does not
-        // narrow the type, so the size read below would not compile.
-        setTooBig(chosen !== null && chosen.size > AVATAR_MAX_BYTES);
     }
 
-    // Synchronising with something outside React -- the browser's table of live
-    // blob URLs -- which is what an effect is actually for.
     useEffect(
         () => () => {
             if (previewRef.current) URL.revokeObjectURL(previewRef.current);
@@ -69,34 +78,32 @@ function AvatarForm({ user }: { user: User }) {
         [],
     );
 
-    const mutation = useMutation({
+    const tooBig = file !== null && file.size > AVATAR_MAX_BYTES;
+
+    const upload = useMutation({
         mutationFn: () => {
             const form = new FormData();
-            // The field name the route's multer instance listens on.
             form.append("avatar", file as File);
             return api.patch<User>("/auth/avatar", form);
         },
         onSuccess: (updated) => {
             applyUser(updated);
             choose(null);
-            // Without this the same file cannot be chosen twice in a row: the
-            // input keeps its value, so re-picking it fires no change event.
+            // Otherwise choosing the same file again would fire no change.
             if (inputRef.current) inputRef.current.value = "";
+            toast.success("Photo updated");
         },
     });
-
-    const error = mutation.error instanceof ApiError ? mutation.error : null;
+    const error = asApiError(upload.error);
 
     function handleSubmit(event: FormEvent) {
         event.preventDefault();
-        if (!file || tooBig) return;
-        mutation.mutate();
+        if (file && !tooBig) upload.mutate();
     }
 
     return (
         <form onSubmit={handleSubmit} className="space-y-4" noValidate>
             {error && <Alert>{error.message}</Alert>}
-
             <div className="flex items-center gap-4">
                 <Avatar
                     src={preview ?? user.avatar?.url}
@@ -118,15 +125,14 @@ function AvatarForm({ user }: { user: User }) {
                     />
                 </div>
             </div>
-
+            {/* Checked here too, so an oversized file costs nobody an upload. */}
             {tooBig && (
                 <Alert>That image is over 500 KB. Choose a smaller one.</Alert>
             )}
-
             <Button
                 type="submit"
                 size="sm"
-                loading={mutation.isPending}
+                loading={upload.isPending}
                 disabled={!file || tooBig}
             >
                 Save photo
@@ -139,28 +145,26 @@ function ProfileForm({ user }: { user: User }) {
     const { applyUser } = useAuth();
     const [fullName, setFullName] = useState(user.fullName ?? "");
 
-    const mutation = useMutation({
+    const save = useMutation({
         mutationFn: () =>
             api.patch<User>("/auth/profile", { fullName: fullName.trim() }),
         onSuccess: (updated) => {
-            // The header, avatars and member lists all read the cached user.
+            // The sidebar, avatars and member lists all read the cached user.
             applyUser(updated);
+            toast.success("Name saved");
         },
     });
-
-    const error = mutation.error instanceof ApiError ? mutation.error : null;
+    const error = asApiError(save.error);
     const dirty = fullName.trim() !== (user.fullName ?? "");
 
     function handleSubmit(event: FormEvent) {
         event.preventDefault();
-        mutation.mutate();
+        save.mutate();
     }
 
     return (
         <form onSubmit={handleSubmit} className="space-y-4" noValidate>
             {error && <Alert>{error.message}</Alert>}
-            {mutation.isSuccess && !dirty && <Alert tone="info">Saved.</Alert>}
-
             <Field
                 label="Display name"
                 name="fullName"
@@ -170,11 +174,10 @@ function ProfileForm({ user }: { user: User }) {
                 hint="Shown to your teammates. Your username and email cannot be changed."
                 error={error?.fieldErrors.fullName}
             />
-
             <Button
                 type="submit"
                 size="sm"
-                loading={mutation.isPending}
+                loading={save.isPending}
                 disabled={!fullName.trim() || !dirty}
             >
                 Save name
@@ -189,38 +192,31 @@ function ChangePasswordForm() {
     const [newPassword, setNewPassword] = useState("");
     const [confirmation, setConfirmation] = useState("");
 
-    const mutation = useMutation({
+    const change = useMutation({
         mutationFn: () =>
             api.post("/auth/change-password", { oldPassword, newPassword }),
     });
+    const error = asApiError(change.error);
 
-    const error = mutation.error instanceof ApiError ? mutation.error : null;
-
+    const problem =
+        newPassword.length > 0 && newPassword.length < PASSWORD_MIN_LENGTH
+            ? `Use at least ${PASSWORD_MIN_LENGTH} characters`
+            : newPassword.length > 0 && newPassword === oldPassword
+              ? "Choose a password different from the current one"
+              : undefined;
     const mismatch =
         confirmation.length > 0 && newPassword !== confirmation
             ? "Passwords do not match"
             : undefined;
 
-    const sameAsOld =
-        newPassword.length > 0 && newPassword === oldPassword
-            ? "Choose a password different from the current one"
-            : undefined;
-
     function handleSubmit(event: FormEvent) {
         event.preventDefault();
-        if (mismatch || sameAsOld) return;
-        mutation.mutate();
+        if (!problem && !mismatch) change.mutate();
     }
 
-    if (mutation.isSuccess) {
+    if (change.isSuccess) {
         return (
             <div className="space-y-4">
-                {/*
-                 * The server clears the stored refresh token on a password
-                 * change, which ends every session including this one. Saying
-                 * so is the point -- it is the reassurance someone changing a
-                 * password after a scare is looking for.
-                 */}
                 <Alert tone="info">
                     Password updated. Every signed-in session was ended,
                     including this one, so anyone else holding your old
@@ -234,7 +230,6 @@ function ChangePasswordForm() {
     return (
         <form onSubmit={handleSubmit} className="space-y-4" noValidate>
             {error && <Alert>{error.message}</Alert>}
-
             <Field
                 label="Current password"
                 name="oldPassword"
@@ -245,7 +240,6 @@ function ChangePasswordForm() {
                 onChange={(event) => setOldPassword(event.target.value)}
                 error={error?.fieldErrors.oldPassword}
             />
-
             <Field
                 label="New password"
                 name="newPassword"
@@ -254,9 +248,9 @@ function ChangePasswordForm() {
                 required
                 value={newPassword}
                 onChange={(event) => setNewPassword(event.target.value)}
-                error={sameAsOld ?? error?.fieldErrors.newPassword}
+                hint={`At least ${PASSWORD_MIN_LENGTH} characters.`}
+                error={problem ?? error?.fieldErrors.newPassword}
             />
-
             <Field
                 label="Confirm new password"
                 name="confirmPassword"
@@ -267,22 +261,16 @@ function ChangePasswordForm() {
                 onChange={(event) => setConfirmation(event.target.value)}
                 error={mismatch}
             />
-
-            <p className="text-xs text-muted">
-                Changing your password signs out every device, including this
-                one.
-            </p>
-
             <Button
                 type="submit"
                 size="sm"
-                loading={mutation.isPending}
+                loading={change.isPending}
                 disabled={
                     !oldPassword ||
                     !newPassword ||
                     !confirmation ||
-                    Boolean(mismatch) ||
-                    Boolean(sameAsOld)
+                    Boolean(problem) ||
+                    Boolean(mismatch)
                 }
             >
                 Change password
@@ -293,50 +281,45 @@ function ChangePasswordForm() {
 
 export function Account() {
     const { user } = useAuth();
-
     if (!user) return null;
 
     const joined = formatDate(user.createdAt);
 
     return (
-        <div className="space-y-6">
-            <div>
-                <h1 className="text-display text-strong">Account</h1>
-                <p className="text-sm text-muted">
-                    Your profile and sign-in details.
-                </p>
-            </div>
+        <div className="space-y-8">
+            <PageHeader
+                title="Account"
+                description="Your profile, sign-in details and preferences."
+            />
 
-            <Card className="p-4">
-                <div className="flex items-center gap-3">
-                    <Avatar
-                        src={user.avatar?.url}
-                        initials={initials(user)}
-                        title={displayName(user)}
-                    />
-                    <div className="min-w-0">
-                        <p className="truncate text-sm font-medium">
-                            {displayName(user)}
-                        </p>
-                        <p className="truncate text-xs text-muted">
-                            @{user.username}
-                            {joined && ` · joined ${joined}`}
-                        </p>
-                    </div>
+            <Card className="flex flex-wrap items-center gap-4 p-5">
+                <Avatar
+                    src={user.avatar?.url}
+                    initials={initials(user)}
+                    title={displayName(user)}
+                    size="lg"
+                />
+                <div className="min-w-0 flex-1">
+                    <p className="text-title truncate text-strong">
+                        {displayName(user)}
+                    </p>
+                    <p className="truncate text-sm text-muted">
+                        @{user.username}
+                        {joined && ` · joined ${joined}`}
+                    </p>
                 </div>
-
-                <dl className="mt-4 grid gap-3 border-t border-hairline pt-4 text-sm sm:grid-cols-2">
+                <dl className="flex flex-wrap gap-6 text-sm">
                     <div>
-                        <dt className="text-xs text-muted">Email</dt>
-                        <dd className="mt-0.5 truncate">{user.email}</dd>
+                        <dt className="text-xs text-faint">Email</dt>
+                        <dd className="mt-0.5 text-strong">{user.email}</dd>
                     </div>
                     <div>
-                        <dt className="text-xs text-muted">Verification</dt>
+                        <dt className="text-xs text-faint">Verification</dt>
                         <dd className="mt-0.5">
                             {user.isEmailVerified === false ? (
-                                <Badge>Not verified</Badge>
+                                <Badge tone="warning">Not verified</Badge>
                             ) : user.isEmailVerified ? (
-                                <Badge tone="accent">Verified</Badge>
+                                <Badge tone="success">Verified</Badge>
                             ) : (
                                 <span className="text-faint">Unknown</span>
                             )}
@@ -345,20 +328,31 @@ export function Account() {
                 </dl>
             </Card>
 
-            <Card className="p-4">
-                <p className="mb-4 text-sm font-medium">Profile</p>
+            <Section
+                title="Profile"
+                description="How you appear to the people you work with."
+            >
                 <div className="space-y-6">
                     <AvatarForm user={user} />
                     <div className="border-t border-hairline pt-6">
                         <ProfileForm user={user} />
                     </div>
                 </div>
-            </Card>
+            </Section>
 
-            <Card className="p-4">
-                <p className="mb-4 text-sm font-medium">Change password</p>
+            <Section
+                title="Password"
+                description="Changing it signs out every device, including this one."
+            >
                 <ChangePasswordForm />
-            </Card>
+            </Section>
+
+            <Section
+                title="Appearance"
+                description="Light, dark, or whatever your system uses."
+            >
+                <ThemeToggle className="w-full max-w-xs" />
+            </Section>
         </div>
     );
 }

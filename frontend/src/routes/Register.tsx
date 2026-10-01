@@ -1,48 +1,43 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { useMutation } from "@tanstack/react-query";
 import { useAuth } from "../context/auth";
-import { ApiError } from "../lib/api";
+import { asApiError } from "../lib/api";
+import { PASSWORD_MIN_LENGTH } from "../lib/constants";
 import { AuthShell } from "../components/AuthShell";
 import { Alert, Button, Field } from "../components/ui";
 
 export function Register() {
     const { register } = useAuth();
     const navigate = useNavigate();
-
     const [fullName, setFullName] = useState("");
     const [username, setUsername] = useState("");
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
-    const [submitting, setSubmitting] = useState(false);
-    const [error, setError] = useState<ApiError | null>(null);
 
-    async function handleSubmit(event: FormEvent) {
-        event.preventDefault();
-        setSubmitting(true);
-        setError(null);
-        try {
-            await register({
+    const create = useMutation({
+        mutationFn: () =>
+            register({
                 email,
                 username,
                 password,
                 fullName: fullName.trim() || undefined,
-            });
-            navigate("/projects", { replace: true });
-        } catch (caught) {
-            setError(
-                caught instanceof ApiError
-                    ? caught
-                    : new ApiError(0, "Something went wrong. Try again."),
-            );
-        } finally {
-            setSubmitting(false);
-        }
+            }),
+        onSuccess: () => void navigate("/projects", { replace: true }),
+    });
+    const error = asApiError(create.error);
+    const tooShort =
+        password.length > 0 && password.length < PASSWORD_MIN_LENGTH;
+
+    function handleSubmit(event: FormEvent) {
+        event.preventDefault();
+        if (!tooShort) create.mutate();
     }
 
     return (
         <AuthShell
-            title="Create an account"
-            subtitle="Set up projects, invite members, and assign work."
+            title="Create your account"
+            subtitle="Set up projects, invite your team, and assign work."
             footer={
                 <>
                     Already registered?{" "}
@@ -56,7 +51,11 @@ export function Register() {
             }
         >
             <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-                {error && <Alert>{error.message}</Alert>}
+                {create.isError && (
+                    <Alert>
+                        {error?.message ?? "Something went wrong. Try again."}
+                    </Alert>
+                )}
 
                 <Field
                     label="Full name"
@@ -64,7 +63,7 @@ export function Register() {
                     autoComplete="name"
                     value={fullName}
                     onChange={(event) => setFullName(event.target.value)}
-                    hint="Optional."
+                    hint="Optional. Shown to your teammates."
                     error={error?.fieldErrors.fullName}
                 />
 
@@ -75,11 +74,7 @@ export function Register() {
                     required
                     minLength={3}
                     value={username}
-                    /*
-                     * The API rejects any uppercase character outright
-                     * (userRegisterValidator uses isLowercase). Lowercasing as
-                     * the user types turns a guaranteed 422 into a non-event.
-                     */
+                    // The API refuses uppercase, so lowercase as they type.
                     onChange={(event) =>
                         setUsername(event.target.value.toLowerCase())
                     }
@@ -106,10 +101,20 @@ export function Register() {
                     required
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
-                    error={error?.fieldErrors.password}
+                    hint={`At least ${PASSWORD_MIN_LENGTH} characters.`}
+                    error={
+                        tooShort
+                            ? `Use at least ${PASSWORD_MIN_LENGTH} characters`
+                            : error?.fieldErrors.password
+                    }
                 />
 
-                <Button type="submit" loading={submitting} className="w-full">
+                <Button
+                    type="submit"
+                    loading={create.isPending}
+                    disabled={tooShort}
+                    className="w-full"
+                >
                     Create account
                 </Button>
             </form>

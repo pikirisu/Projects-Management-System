@@ -1,7 +1,9 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, ApiError } from "../../lib/api";
+import { toast } from "sonner";
+import { api, asApiError, errorMessage } from "../../lib/api";
+import { keys } from "../../lib/queries";
 import type { Project } from "../../lib/types";
 import { Alert, Button, Card, ConfirmButton, Field, Textarea } from "../ui";
 
@@ -18,21 +20,23 @@ export function ProjectSettings({ project }: { project: Project }) {
                 description: description.trim(),
             }),
         onSuccess: (updated) => {
-            queryClient.setQueryData(["project", project._id], updated);
-            void queryClient.invalidateQueries({ queryKey: ["projects"] });
+            queryClient.setQueryData(keys.project(project._id), updated);
+            void queryClient.invalidateQueries({ queryKey: keys.projects });
+            toast.success("Project saved");
         },
     });
 
     const remove = useMutation({
         mutationFn: () => api.delete(`/projects/${project._id}`),
         onSuccess: () => {
-            void queryClient.invalidateQueries({ queryKey: ["projects"] });
-            // Nothing left to render here once the project is gone.
+            void queryClient.invalidateQueries({ queryKey: keys.projects });
+            void queryClient.invalidateQueries({ queryKey: keys.myTasks });
+            toast.success(`Deleted ${project.name}`);
             void navigate("/projects", { replace: true });
         },
     });
 
-    const saveError = save.error instanceof ApiError ? save.error : null;
+    const saveError = asApiError(save.error);
     const dirty =
         name.trim() !== project.name ||
         description.trim() !== (project.description ?? "");
@@ -43,16 +47,11 @@ export function ProjectSettings({ project }: { project: Project }) {
     }
 
     return (
-        <div className="space-y-6">
-            <Card className="p-4">
+        <div className="max-w-2xl space-y-6">
+            <Card className="p-5">
                 <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-                    <p className="text-sm font-medium">Project details</p>
-
+                    <p className="text-heading text-strong">Project details</p>
                     {saveError && <Alert>{saveError.message}</Alert>}
-                    {save.isSuccess && !dirty && (
-                        <Alert tone="info">Saved.</Alert>
-                    )}
-
                     <Field
                         label="Name"
                         name="name"
@@ -61,16 +60,13 @@ export function ProjectSettings({ project }: { project: Project }) {
                         onChange={(event) => setName(event.target.value)}
                         error={saveError?.fieldErrors.name}
                     />
-
                     <Textarea
                         label="Description"
                         name="description"
                         rows={3}
                         value={description}
                         onChange={(event) => setDescription(event.target.value)}
-                        error={saveError?.fieldErrors.description}
                     />
-
                     <Button
                         type="submit"
                         size="sm"
@@ -82,22 +78,22 @@ export function ProjectSettings({ project }: { project: Project }) {
                 </form>
             </Card>
 
-            <Card className="p-4">
-                <p className="text-sm font-medium text-red-700 dark:text-red-400">
-                    Danger zone
+            <Card className="border-red-200 p-5 dark:border-red-900/60">
+                <p className="text-heading text-red-700 dark:text-red-400">
+                    Delete this project
                 </p>
                 <p className="mt-1 text-sm text-muted">
-                    Deleting this project also removes its tasks, subtasks,
-                    notes, members and uploaded files. This cannot be undone.
+                    Its tasks, subtasks, notes, members and uploaded files go
+                    with it. This cannot be undone.
                 </p>
-
-                {remove.error instanceof ApiError && (
+                {remove.isError && (
                     <div className="mt-3">
-                        <Alert>{remove.error.message}</Alert>
+                        <Alert>
+                            {errorMessage(remove.error, "Could not delete it.")}
+                        </Alert>
                     </div>
                 )}
-
-                <div className="mt-3">
+                <div className="mt-4">
                     <ConfirmButton
                         size="md"
                         loading={remove.isPending}

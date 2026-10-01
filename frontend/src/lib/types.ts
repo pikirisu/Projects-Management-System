@@ -1,21 +1,14 @@
-/**
- * Every controller in the API answers with the same envelope
- * (src/utils/api-response.js), so one generic type covers the whole surface.
- */
+/** The envelope every API response uses (src/utils/api-response.js). */
 export interface ApiEnvelope<T> {
     statusCode: number;
     data: T;
     message: string;
     success: boolean;
-    /**
-     * Present on failures. The validator middleware emits one single-key object
-     * per invalid field -- `[{ email: "Email is invalid" }]` -- which `ApiError`
-     * in ./api.ts flattens into a field -> message record.
-     */
+    /** On a 422: one `{ field: message }` per invalid field. */
     errors?: Array<Record<string, string>>;
 }
 
-/** Mirrors UserRolesEnum in src/utils/constants.js. */
+/** Mirrors ROLES in src/utils/constants.js. */
 export type Role = "admin" | "project_admin" | "member";
 
 export const ROLE_LABELS: Record<Role, string> = {
@@ -30,28 +23,45 @@ export interface User {
     email: string;
     fullName?: string;
     isEmailVerified?: boolean;
-    /*
-     * Just the URL. The server stores which provider holds the image and under
-     * what key so it can delete the old one, and deliberately keeps that out of
-     * the response -- the client has no use for it and should not learn to.
-     */
-    avatar?: {
-        url: string;
-    };
+    avatar?: { url: string };
     createdAt?: string;
 }
+
+export type TaskStatus = "todo" | "in_progress" | "done";
+
+export const TASK_STATUSES: TaskStatus[] = ["todo", "in_progress", "done"];
+
+export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
+    todo: "To do",
+    in_progress: "In progress",
+    done: "Done",
+};
+
+export type TaskPriority = "low" | "medium" | "high";
+
+/** Highest first, which is the order every picker and sort uses. */
+export const TASK_PRIORITIES: TaskPriority[] = ["high", "medium", "low"];
+
+export const TASK_PRIORITY_LABELS: Record<TaskPriority, string> = {
+    high: "High",
+    medium: "Medium",
+    low: "Low",
+};
+
+export type TaskCounts = Partial<Record<TaskStatus, number>>;
 
 export interface Project {
     _id: string;
     name: string;
     description?: string;
-    /** Live count, computed by the getProjects aggregation. Absent elsewhere. */
-    members?: number;
     createdBy?: string;
     createdAt?: string;
+    /** Only on GET /projects, computed by its aggregation. */
+    members?: number;
+    taskCounts?: TaskCounts;
 }
 
-/** The shape GET /projects returns: a project plus *the caller's* role on it. */
+/** GET /projects: a project plus the caller's own role on it. */
 export interface ProjectListEntry {
     project: Project;
     role: Role;
@@ -63,31 +73,16 @@ export interface AuthPayload {
     refreshToken: string;
 }
 
-/** Mirrors TaskStatusEnum in src/utils/constants.js. */
-export type TaskStatus = "todo" | "in_progress" | "done";
-
-export const TASK_STATUSES: TaskStatus[] = ["todo", "in_progress", "done"];
-
-export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
-    todo: "To do",
-    in_progress: "In progress",
-    done: "Done",
-};
-
 export interface Attachment {
     _id?: string;
     url: string;
     mimetype?: string;
     size?: number;
-    provider?: string;
-    key?: string;
-    resourceType?: string;
 }
 
 /**
- * `assignedTo` is populated on reads (GET /tasks/:projectId and the
- * getTaskById aggregation) but comes back as a bare id from create/update,
- * which return the raw document. `asUser` in ./display.ts narrows the two.
+ * Populated (a User) on reads, a bare id on create/update responses.
+ * `asUser` and `refId` in ./display.ts read either shape.
  */
 export type UserRef = User | string | null | undefined;
 
@@ -99,6 +94,10 @@ export interface Task {
     assignedTo?: UserRef;
     assignedBy?: UserRef;
     status: TaskStatus;
+    /** Absent on tasks created before priorities existed: read as medium. */
+    priority?: TaskPriority;
+    /** A calendar day, stored as UTC midnight. */
+    dueDate?: string | null;
     attachments?: Attachment[];
     createdAt?: string;
     updatedAt?: string;
@@ -118,6 +117,11 @@ export interface TaskDetail extends Task {
     subtasks: Subtask[];
 }
 
+/** GET /me/tasks populates the project's name. */
+export interface MyTask extends Omit<Task, "project"> {
+    project: { _id: string; name: string };
+}
+
 export interface Note {
     _id: string;
     project: string;
@@ -127,11 +131,7 @@ export interface Note {
     updatedAt?: string;
 }
 
-/**
- * GET /projects/:projectId/members. The aggregation projects `_id: 0`, so the
- * membership row has no id of its own -- `user._id` is the key, and it is also
- * what the update/delete routes take as their :userId segment.
- */
+/** GET /projects/:projectId/members. `user._id` is the row's key. */
 export interface ProjectMemberEntry {
     project: string;
     user: User;

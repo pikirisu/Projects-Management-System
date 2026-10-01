@@ -1,22 +1,17 @@
-/*
- * Inter, loaded before Tailwind because CSS requires every @import to precede
- * other rules. The system stack is the fallback, so an offline load degrades to
- * what the app looked like before rather than to nothing.
- */
+/* Every @import must precede other rules, so the font comes before Tailwind. */
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
 @import "tailwindcss";
 
 /*
- * Semantic colours, not raw scale steps.
- *
- * `text-neutral-500 dark:text-neutral-400` appeared 36 times across the app --
- * a role with no name, spelled out longhand every time, which is how the 37th
- * use ends up one step off and nobody notices. Each pair below is declared once
- * here and referenced as `text-muted`, `bg-surface`, `border-hairline`.
- *
- * `@theme inline` is what makes the light/dark pairing possible: it emits
- * `var(--surface)` into the utility rather than resolving it at build time, so
- * the media query below can move it.
+ * Dark mode follows <html data-theme>, which lib/theme.ts sets from the user's
+ * choice (or their system's), rather than the media query alone.
+ */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/*
+ * Semantic colours, not raw scale steps: `text-muted`, `bg-surface`,
+ * `border-hairline`. `inline` emits var(--surface) into each utility instead
+ * of resolving it at build time, which is what lets the theme switch them.
  */
 @theme inline {
     --font-sans:
@@ -35,47 +30,38 @@
 }
 
 :root {
-    color-scheme: light dark;
+    color-scheme: light;
 
     --canvas: oklch(98.2% 0.002 265);
     --surface: oklch(100% 0 0);
-    --sunken: oklch(96.5% 0.003 265);
-    --hairline: oklch(91% 0.005 265);
+    --sunken: oklch(96.3% 0.004 265);
+    --hairline: oklch(91% 0.006 265);
     --strong: oklch(21% 0.012 265);
-    --muted: oklch(52% 0.014 265);
-    --faint: oklch(66% 0.012 265);
+    --muted: oklch(50% 0.014 265);
+    --faint: oklch(64% 0.012 265);
 
-    /*
-     * Elevation is deliberately shallow. Two steps, both soft: a card that
-     * casts a hard shadow reads as a 2012 dashboard, and one that casts none
-     * reads as a wireframe.
-     */
     --elev-raised:
         0 1px 2px oklch(20% 0.02 265 / 0.04),
         0 1px 3px oklch(20% 0.02 265 / 0.06);
     --elev-overlay:
-        0 8px 24px oklch(20% 0.02 265 / 0.1),
+        0 12px 32px oklch(20% 0.02 265 / 0.12),
         0 2px 6px oklch(20% 0.02 265 / 0.06);
 }
 
-@media (prefers-color-scheme: dark) {
-    :root {
-        --canvas: oklch(16% 0.006 265);
-        --surface: oklch(20.5% 0.007 265);
-        --sunken: oklch(18% 0.006 265);
-        --hairline: oklch(28% 0.008 265);
-        --strong: oklch(97% 0.003 265);
-        --muted: oklch(72% 0.013 265);
-        --faint: oklch(58% 0.012 265);
+:root[data-theme="dark"] {
+    color-scheme: dark;
 
-        /*
-         * A shadow barely reads on a dark surface, so depth there comes from
-         * the surface being lighter than the canvas. These stay only to keep
-         * overlays separated from what is behind them.
-         */
-        --elev-raised: 0 1px 2px oklch(0% 0 0 / 0.3);
-        --elev-overlay: 0 12px 32px oklch(0% 0 0 / 0.5);
-    }
+    --canvas: oklch(15.5% 0.006 265);
+    --surface: oklch(19.5% 0.007 265);
+    --sunken: oklch(23% 0.008 265);
+    --hairline: oklch(28% 0.008 265);
+    --strong: oklch(96% 0.003 265);
+    --muted: oklch(72% 0.013 265);
+    --faint: oklch(56% 0.012 265);
+
+    /* On dark, depth comes from lighter surfaces; shadows only separate overlays. */
+    --elev-raised: 0 1px 2px oklch(0% 0 0 / 0.3);
+    --elev-overlay: 0 16px 40px oklch(0% 0 0 / 0.55);
 }
 
 html,
@@ -90,18 +76,10 @@ body {
     color: var(--strong);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    /* Inter's defaults leave headings looking loose at display sizes. */
     font-feature-settings: "cv11", "ss01";
-    font-variation-settings: normal;
 }
 
-/*
- * The type scale the app did not have. 103 of its 113 text sizes were xs or sm,
- * which is why every screen read as one undifferentiated block: nothing was
- * larger than anything else, so nothing looked more important than anything
- * else. Headings get tighter tracking as they grow, which is what stops a large
- * weight from looking inflated rather than deliberate.
- */
+/* A type scale, so a page has a visible hierarchy rather than one size. */
 @utility text-display {
     font-size: 1.5rem;
     line-height: 1.875rem;
@@ -131,11 +109,7 @@ body {
     text-transform: uppercase;
 }
 
-/*
- * The tab strip scrolls horizontally on a narrow screen, but a visible
- * scrollbar track under a row of tabs reads as a rendering artifact -- which is
- * exactly how it looked on Windows, where the track is always drawn.
- */
+/* The tab strip scrolls on narrow screens without drawing a scrollbar track. */
 @utility scrollbar-none {
     scrollbar-width: none;
     &::-webkit-scrollbar {
@@ -143,10 +117,7 @@ body {
     }
 }
 
-/*
- * One motion vocabulary. Durations are short on purpose: an interface that
- * animates for 300ms feels slower than one that does not animate at all.
- */
+/* One short motion vocabulary: 130ms feels responsive, 300ms feels slow. */
 @utility transition-ui {
     transition-property:
         color, background-color, border-color, outline-color, box-shadow,

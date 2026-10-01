@@ -1,61 +1,55 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, ApiError } from "../../lib/api";
-import { asUser, displayName, formatDate, initials } from "../../lib/display";
+import { StickyNote } from "lucide-react";
+import { toast } from "sonner";
+import { useProjectContext } from "../../context/project";
+import { api, asApiError, errorMessage } from "../../lib/api";
+import { asUser, displayName, formatDate } from "../../lib/display";
+import { keys } from "../../lib/queries";
 import type { Note } from "../../lib/types";
-import type { Permissions } from "../../routes/ProjectDetail";
 import {
     Alert,
-    Avatar,
     Button,
     Card,
     ConfirmButton,
     EmptyState,
-    Spinner,
+    Skeleton,
     Textarea,
+    UserAvatar,
 } from "../ui";
 
-function NoteComposer({
-    projectId,
-    note,
-    onDone,
-}: {
-    projectId: string;
-    /** Present when editing an existing note, absent when writing a new one. */
-    note?: Note;
-    onDone: () => void;
-}) {
+/** Writes a new note, or edits `note` when one is given. */
+function NoteComposer({ note, onDone }: { note?: Note; onDone: () => void }) {
+    const { projectId } = useProjectContext();
     const queryClient = useQueryClient();
     const [content, setContent] = useState(note?.content ?? "");
 
-    const mutation = useMutation({
-        mutationFn: () =>
-            note
-                ? api.put<Note>(`/notes/${projectId}/n/${note._id}`, {
-                      content: content.trim(),
-                  })
-                : api.post<Note>(`/notes/${projectId}`, {
-                      content: content.trim(),
-                  }),
+    const save = useMutation({
+        mutationFn: () => {
+            const body = { content: content.trim() };
+            return note
+                ? api.put<Note>(`/notes/${projectId}/n/${note._id}`, body)
+                : api.post<Note>(`/notes/${projectId}`, body);
+        },
         onSuccess: () => {
             void queryClient.invalidateQueries({
-                queryKey: ["project", projectId, "notes"],
+                queryKey: keys.notes(projectId),
             });
+            toast.success(note ? "Note saved" : "Note added");
             onDone();
         },
     });
 
-    const error = mutation.error instanceof ApiError ? mutation.error : null;
+    const error = asApiError(save.error);
 
     function handleSubmit(event: FormEvent) {
         event.preventDefault();
-        mutation.mutate();
+        save.mutate();
     }
 
     return (
         <form onSubmit={handleSubmit} className="space-y-3" noValidate>
             {error && <Alert>{error.message}</Alert>}
-
             <Textarea
                 label={note ? "Edit note" : "New note"}
                 name="content"
@@ -66,22 +60,16 @@ function NoteComposer({
                 onChange={(event) => setContent(event.target.value)}
                 error={error?.fieldErrors.content}
             />
-
             <div className="flex gap-2">
                 <Button
                     type="submit"
                     size="sm"
-                    loading={mutation.isPending}
+                    loading={save.isPending}
                     disabled={!content.trim()}
                 >
                     {note ? "Save note" : "Add note"}
                 </Button>
-                <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    onClick={onDone}
-                >
+                <Button size="sm" variant="ghost" onClick={onDone}>
                     Cancel
                 </Button>
             </div>
@@ -89,63 +77,45 @@ function NoteComposer({
     );
 }
 
-function NoteCard({
-    note,
-    projectId,
-    can,
-}: {
-    note: Note;
-    projectId: string;
-    can: Permissions;
-}) {
+function NoteCard({ note }: { note: Note }) {
+    const { projectId, can } = useProjectContext();
     const queryClient = useQueryClient();
     const [editing, setEditing] = useState(false);
-
-    const remove = useMutation({
-        mutationFn: () => api.delete<Note>(`/notes/${projectId}/n/${note._id}`),
-        onSuccess: () => {
-            void queryClient.invalidateQueries({
-                queryKey: ["project", projectId, "notes"],
-            });
-        },
-    });
-
     const author = asUser(note.createdBy);
     const written = formatDate(note.updatedAt ?? note.createdAt);
+
+    const remove = useMutation({
+        mutationFn: () => api.delete(`/notes/${projectId}/n/${note._id}`),
+        onSuccess: () => {
+            void queryClient.invalidateQueries({
+                queryKey: keys.notes(projectId),
+            });
+            toast.success("Note deleted");
+        },
+        onError: (error) =>
+            toast.error(errorMessage(error, "Could not delete the note")),
+    });
 
     if (editing) {
         return (
             <Card className="p-4">
-                <NoteComposer
-                    projectId={projectId}
-                    note={note}
-                    onDone={() => setEditing(false)}
-                />
+                <NoteComposer note={note} onDone={() => setEditing(false)} />
             </Card>
         );
     }
 
     return (
         <Card className="space-y-3 p-4">
-            <p className="text-sm whitespace-pre-wrap">{note.content}</p>
-
+            <p className="text-sm whitespace-pre-wrap text-strong">
+                {note.content}
+            </p>
             <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2 text-xs text-muted">
-                    <Avatar
-                        size="sm"
-                        src={author?.avatar?.url}
-                        initials={initials(author)}
-                        title={displayName(author)}
-                    />
+                    <UserAvatar user={author} size="sm" />
                     {author ? displayName(author) : "Unknown author"}
                     {written && <span>· {written}</span>}
                 </div>
-
-                {/*
-                 * Notes are admin-only on the server (note.routes.js gates
-                 * create, update and delete on UserRolesEnum.ADMIN alone), so
-                 * project admins see them read-only -- same as members.
-                 */}
+                {/* Notes are admin-only on the server, even for project admins. */}
                 {can.manageProject && (
                     <div className="flex items-center gap-1">
                         <Button
@@ -163,97 +133,72 @@ function NoteCard({
                     </div>
                 )}
             </div>
-
-            {remove.error instanceof ApiError && (
-                <Alert>{remove.error.message}</Alert>
-            )}
         </Card>
     );
 }
 
 export function NotesPanel({
-    projectId,
-    can,
     notes,
     isPending,
     error,
 }: {
-    projectId: string;
-    can: Permissions;
     notes?: Note[];
     isPending: boolean;
     error: unknown;
 }) {
+    const { can } = useProjectContext();
     const [composing, setComposing] = useState(false);
 
     if (isPending) {
         return (
-            <div className="flex items-center gap-2 py-12 text-sm text-muted">
-                <Spinner />
-                Loading notes…
+            <div className="space-y-3">
+                {[0, 1].map((i) => (
+                    <Card key={i} className="space-y-2 p-4">
+                        <Skeleton className="h-4 w-full" />
+                        <Skeleton className="h-4 w-1/2" />
+                    </Card>
+                ))}
             </div>
         );
     }
-
     if (error) {
-        return (
-            <Alert>
-                {error instanceof ApiError
-                    ? error.message
-                    : "Could not load notes."}
-            </Alert>
-        );
+        return <Alert>{errorMessage(error, "Could not load notes.")}</Alert>;
     }
 
     const all = notes ?? [];
+    const newNoteButton = can.manageProject && !composing && (
+        <Button size="sm" onClick={() => setComposing(true)}>
+            New note
+        </Button>
+    );
 
     return (
         <div className="space-y-4">
-            {can.manageProject && !composing && (
-                <div className="flex justify-end">
-                    <Button size="sm" onClick={() => setComposing(true)}>
-                        New note
-                    </Button>
-                </div>
+            {all.length > 0 && newNoteButton && (
+                <div className="flex justify-end">{newNoteButton}</div>
             )}
 
             {composing && (
                 <Card className="p-4">
-                    <NoteComposer
-                        projectId={projectId}
-                        onDone={() => setComposing(false)}
-                    />
+                    <NoteComposer onDone={() => setComposing(false)} />
                 </Card>
             )}
 
             {all.length === 0 ? (
                 <EmptyState
+                    icon={<StickyNote className="size-5" />}
                     title="No notes yet"
                     description={
                         can.manageProject
-                            ? "Notes are for context the whole project needs — decisions, links, conventions."
-                            : "Project admins have not written any notes yet."
+                            ? "Notes hold context the whole project needs: decisions, links, conventions."
+                            : "The project's admins have not written any notes yet."
                     }
-                    action={
-                        can.manageProject && !composing ? (
-                            <Button
-                                size="sm"
-                                onClick={() => setComposing(true)}
-                            >
-                                New note
-                            </Button>
-                        ) : undefined
-                    }
+                    action={newNoteButton}
                 />
             ) : (
                 <div className="space-y-3">
                     {all.map((note) => (
-                        <NoteCard
-                            key={note._id}
-                            note={note}
-                            projectId={projectId}
-                            can={can}
-                        />
+                        <NoteCard key={note._id} note={note} />
                     ))}
                 </div>
             )}

@@ -1,15 +1,13 @@
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { api, ApiError } from "../lib/api";
+import { api, errorMessage } from "../lib/api";
 import { AuthShell } from "../components/AuthShell";
 import { Alert, Button, Spinner } from "../components/ui";
 
-/*
- * The endpoint behind this is a GET that flips a flag, so it runs on mount
- * rather than behind a button. `retry: false` matters: an expired token is a
- * permanent 400, and retrying it would just delay the explanation. `gcTime: 0`
- * keeps a second visit to the same link from reading a cached success and
- * claiming to have verified a token the server has already spent.
+/**
+ * The page the verification email links to. The endpoint is a GET that flips a
+ * flag, so it runs on mount. No retry, since an expired token stays expired,
+ * and no cache, so a second visit cannot show a stale success.
  */
 export function VerifyEmail() {
     const { token = "" } = useParams();
@@ -73,14 +71,9 @@ export function VerifyEmail() {
         >
             <div className="space-y-4">
                 <Alert>
-                    {error instanceof ApiError
-                        ? error.message
-                        : "Could not verify this link."}
+                    {errorMessage(error, "Could not verify this link.")}
                 </Alert>
-                {/*
-                 * Resending needs an authenticated caller, so the only route
-                 * back is to sign in -- the banner in the app offers it there.
-                 */}
+                {/* Resending needs a session, so the way back is to sign in. */}
                 <p className="text-sm text-muted">
                     Sign in and use the banner at the top of the page to send
                     yourself a new link.

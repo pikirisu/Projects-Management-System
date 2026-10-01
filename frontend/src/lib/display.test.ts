@@ -3,9 +3,12 @@ import {
     asUser,
     attachmentName,
     displayName,
+    dueStatus,
     formatBytes,
     initials,
+    projectColor,
     refId,
+    toDateInput,
 } from "./display";
 import type { User } from "./types";
 
@@ -73,20 +76,68 @@ describe("formatBytes", () => {
 });
 
 describe("attachmentName", () => {
-    it("uses the last path segment", () => {
+    it("uses the last path segment, decoded", () => {
         expect(
             attachmentName(
                 "https://res.cloudinary.com/demo/raw/upload/spec.pdf",
             ),
         ).toBe("spec.pdf");
-        expect(attachmentName("/images/1737000000-notes.txt")).toBe(
-            "1737000000-notes.txt",
-        );
-    });
-
-    it("decodes escaped characters", () => {
         expect(attachmentName("/images/quarterly%20plan.pdf")).toBe(
             "quarterly plan.pdf",
         );
+    });
+});
+
+describe("projectColor", () => {
+    it("is stable per project and differs between projects", () => {
+        expect(projectColor("p1")).toBe(projectColor("p1"));
+        expect(projectColor("p1")).not.toBe(projectColor("p2"));
+    });
+});
+
+describe("dueStatus", () => {
+    // Local noon on 10 March, so no timezone puts "today" on another day.
+    const now = new Date(2026, 2, 10, 12);
+
+    it("is null without a due date", () => {
+        expect(dueStatus(undefined, now)).toBeNull();
+        expect(dueStatus(null, now)).toBeNull();
+        expect(dueStatus("not a date", now)).toBeNull();
+    });
+
+    it("counts whole calendar days, not hours", () => {
+        // Stored as UTC midnight, the way the API returns it.
+        expect(dueStatus("2026-03-10T00:00:00.000Z", now)).toMatchObject({
+            days: 0,
+            tone: "today",
+            label: "Due today",
+        });
+        expect(dueStatus("2026-03-11T00:00:00.000Z", now)).toMatchObject({
+            days: 1,
+            label: "Due tomorrow",
+        });
+        expect(dueStatus("2026-03-09T00:00:00.000Z", now)).toMatchObject({
+            days: -1,
+            tone: "overdue",
+        });
+    });
+
+    it("grades urgency by distance", () => {
+        expect(dueStatus("2026-03-15", now)?.tone).toBe("soon");
+        expect(dueStatus("2026-04-30", now)?.tone).toBe("later");
+    });
+
+    it("names the calendar day it was set to, in any timezone", () => {
+        // Formatted in UTC: local formatting would say 2 Oct west of Greenwich.
+        const thirdOfOctober = new Intl.DateTimeFormat(undefined, {
+            day: "numeric",
+            month: "short",
+            timeZone: "UTC",
+        }).format(Date.UTC(2026, 9, 3));
+        expect(dueStatus("2026-10-03T00:00:00.000Z", now)?.label).toBe(
+            `Due ${thirdOfOctober}`,
+        );
+        expect(toDateInput("2026-10-03T00:00:00.000Z")).toBe("2026-10-03");
+        expect(toDateInput(null)).toBe("");
     });
 });

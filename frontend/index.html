@@ -5,9 +5,29 @@
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta
             name="description"
-            content="Project Camp - project management with per-project role-based access control."
+            content="Project Camp: plan work on a board per project, with role-based access for your team."
         />
+        <meta name="theme-color" content="#4f46e5" />
+        <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
         <title>Project Camp</title>
+        <script>
+            // Applies the saved theme before first paint, so a dark-mode user
+            // never sees a white flash. lib/theme.ts owns it after that.
+            (function () {
+                var saved;
+                try {
+                    saved = localStorage.getItem("project-camp.theme");
+                } catch (e) {}
+                var dark =
+                    saved === "dark" ||
+                    (saved !== "light" &&
+                        window.matchMedia("(prefers-color-scheme: dark)")
+                            .matches);
+                document.documentElement.dataset.theme = dark
+                    ? "dark"
+                    : "light";
+            })();
+        </script>
     </head>
     <body>
         <div id="root"></div>
