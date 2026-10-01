@@ -1,341 +1,329 @@
-// End-to-end smoke test for the V1 backend.
+// End-to-end suite for the API, run against a live server and a real MongoDB.
 //
-// Preconditions:
-//   - `npm run dev` (or `npm start`) already running, started with
-//     RATE_LIMIT_ENABLED=false so repeated runs are not throttled.
-//   - .env's MONGO_URI reachable and SERVER_URL pointing at that same running server.
+//   RATE_LIMIT_ENABLED=false npm run dev   # the flag belongs on the server
+//   npm run verify
 //
-// Run with: node scripts/verify.mjs
-// Cleans up everything it creates (DB docs + uploaded test file) in a finally block.
+// It reads SERVER_URL and MONGO_URI from the environment (or .env) and removes
+// everything it creates, in a finally block, even when an assertion fails.
 
 import "dotenv/config";
 import assert from "node:assert/strict";
-import { test } from "node:test";
-import mongoose from "mongoose";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { test } from "node:test";
+import mongoose from "mongoose";
 
-if (!process.env.SERVER_URL) {
-    throw new Error(
-        "SERVER_URL is not set in .env — required to run this script.",
-    );
-}
-if (!process.env.MONGO_URI) {
-    throw new Error(
-        "MONGO_URI is not set in .env — required to run this script.",
-    );
+for (const name of ["SERVER_URL", "MONGO_URI"]) {
+    if (!process.env[name]) throw new Error(`${name} is not set`);
 }
 
 const BASE = `${process.env.SERVER_URL}/api/v1`;
 const STAMP = Date.now();
+const PASSWORD = "Passw0rd!";
+
+const created = { users: [], projects: [], tasks: [], files: [], avatars: [] };
+
+// ---- helpers -----------------------------------------------------------------
 
 async function api(pathname, { method = "GET", token, body, form } = {}) {
-    const headers = {};
-    if (token) headers.Authorization = `Bearer ${token}`;
-    let payload = body;
-    if (body && !form) {
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    let payload = form;
+    if (body !== undefined) {
         headers["Content-Type"] = "application/json";
         payload = JSON.stringify(body);
     }
-    const requestBody = form ?? payload;
+
     const res = await fetch(`${BASE}${pathname}`, {
         method,
         headers,
-        // Omitted rather than set to undefined: fetch rejects a GET that
-        // carries a body at all, and these helpers default to GET.
-        ...(requestBody === undefined ? {} : { body: requestBody }),
+        // Omitted, not undefined: fetch rejects a GET that carries a body key.
+        ...(payload === undefined ? {} : { body: payload }),
     });
     const json = await res.json().catch(() => null);
 
-    /*
-     * 429 is never an expected answer here, and when it arrives it arrives for
-     * every remaining request -- a couple of hundred assertions fail at once
-     * and none of them say why. The budget is per server process and the
-     * window is fifteen minutes, so two consecutive runs are enough to trip it.
-     */
     if (res.status === 429) {
         throw new Error(
-            `The server throttled ${method} ${pathname}: ${json?.message ?? "429"}.
-
-This suite makes a few hundred requests per run, so a second run inside the
-rate-limit window exhausts the budget. Start the server with
-RATE_LIMIT_ENABLED=false -- the limiter is read in the server process, so
-setting the flag on this script has no effect at all.`,
+            `The server throttled ${method} ${pathname}. Start it with ` +
+                "RATE_LIMIT_ENABLED=false; the flag is read by the server, not by this script.",
         );
     }
-
-    return { status: res.status, json };
+    return { status: res.status, json, data: json?.data };
 }
 
-test("V1 backend smoke test", async (t) => {
+const post = (p, token, body) => api(p, { method: "POST", token, body });
+const put = (p, token, body) => api(p, { method: "PUT", token, body });
+const patch = (p, token, body) => api(p, { method: "PATCH", token, body });
+const del = (p, token) => api(p, { method: "DELETE", token });
+
+function expectStatus(res, status, message) {
+    assert.equal(res.status, status, message ?? JSON.stringify(res.json));
+    return res;
+}
+
+const emailFor = (label) => `verify-${label}-${STAMP}@test.local`;
+
+async function register(label, extra = {}) {
+    const res = expectStatus(
+        await post("/auth/register", undefined, {
+            email: emailFor(label),
+            username: `v${label}${STAMP}`,
+            password: PASSWORD,
+            ...extra,
+        }),
+        201,
+    );
+    created.users.push(res.data.user._id);
+    return res.data.user;
+}
+
+async function login(label, password = PASSWORD) {
+    return expectStatus(
+        await post("/auth/login", undefined, {
+            email: emailFor(label),
+            password,
+        }),
+        200,
+    ).data;
+}
+
+async function createProject(token, name) {
+    const res = expectStatus(
+        await post("/projects", token, { name, description: "verify" }),
+        201,
+    );
+    created.projects.push(res.data._id);
+    return res.data._id;
+}
+
+async function createTask(projectId, token, body) {
+    const res = expectStatus(
+        await post(`/tasks/${projectId}`, token, body),
+        201,
+    );
+    created.tasks.push(res.data._id);
+    return res.data;
+}
+
+/** Only a hash is stored, so plant a known one to test a token flow. */
+async function plantToken(userId, field) {
+    const raw = `${field}-${STAMP}`;
+    await mongoose.connection.db.collection("users").updateOne(
+        { _id: new mongoose.Types.ObjectId(userId) },
+        {
+            $set: {
+                [`${field}Token`]: crypto
+                    .createHash("sha256")
+                    .update(raw)
+                    .digest("hex"),
+                [`${field}Expiry`]: new Date(Date.now() + 10 * 60 * 1000),
+            },
+        },
+    );
+    return raw;
+}
+
+const png = (bytes) => new Blob([new Uint8Array(bytes)], { type: "image/png" });
+
+function formWith(field, blob, filename, fields = {}) {
+    const form = new FormData();
+    for (const [key, value] of Object.entries(fields)) form.append(key, value);
+    if (blob) form.append(field, blob, filename);
+    return form;
+}
+
+// ---- the suite ---------------------------------------------------------------
+
+test("API end to end", async (t) => {
     await mongoose.connect(process.env.MONGO_URI);
-    const createdProjectIds = [];
-    const createdUserIds = [];
-    const createdTaskIds = [];
-    const uploadedFiles = [];
-    const uploadedAvatars = [];
 
     try {
-        let adminToken, memberToken, adminId, memberId;
-        let memberRefreshToken;
-        // A registered account that is never added to any project here, so its
-        // id is well-formed but not a member of anything.
-        let outsiderId;
-        let projectId, otherProjectId, taskId, subTaskId, noteId;
+        let admin, member, outsider;
+        let projectId, otherProjectId, taskId;
 
-        await t.test("register + login admin & member", async () => {
-            const a = await api("/auth/register", {
-                method: "POST",
-                body: {
-                    email: `verify-admin-${STAMP}@test.local`,
-                    username: `vadmin${STAMP}`,
-                    password: "Passw0rd!",
-                },
-            });
-            assert.equal(a.status, 201, JSON.stringify(a.json));
-            createdUserIds.push(a.json.data.user._id);
+        await t.test("accounts: register, sign in, read back", async () => {
+            const adminUser = await register("admin");
+            const memberUser = await register("member");
+            const outsiderUser = await register("outsider");
 
-            const b = await api("/auth/register", {
-                method: "POST",
-                body: {
-                    email: `verify-member-${STAMP}@test.local`,
-                    username: `vmember${STAMP}`,
-                    password: "Passw0rd!",
-                },
-            });
-            assert.equal(b.status, 201, JSON.stringify(b.json));
-            createdUserIds.push(b.json.data.user._id);
+            admin = { ...(await login("admin")), id: adminUser._id };
+            member = { ...(await login("member")), id: memberUser._id };
+            outsider = { ...(await login("outsider")), id: outsiderUser._id };
 
-            const la = await api("/auth/login", {
-                method: "POST",
-                body: {
-                    email: `verify-admin-${STAMP}@test.local`,
-                    password: "Passw0rd!",
-                },
-            });
-            assert.equal(la.status, 200, JSON.stringify(la.json));
-            adminToken = la.json.data.accessToken;
-            adminId = la.json.data.user._id;
+            const named = await register("named", { fullName: "Ada Lovelace" });
+            assert.equal(named.fullName, "Ada Lovelace");
 
-            const lb = await api("/auth/login", {
-                method: "POST",
-                body: {
-                    email: `verify-member-${STAMP}@test.local`,
-                    password: "Passw0rd!",
-                },
-            });
-            assert.equal(lb.status, 200, JSON.stringify(lb.json));
-            memberToken = lb.json.data.accessToken;
-            memberRefreshToken = lb.json.data.refreshToken;
-            memberId = lb.json.data.user._id;
-
-            const c = await api("/auth/register", {
-                method: "POST",
-                body: {
-                    email: `verify-outsider-${STAMP}@test.local`,
-                    username: `voutsider${STAMP}`,
-                    password: "Passw0rd!",
-                },
-            });
-            assert.equal(c.status, 201, JSON.stringify(c.json));
-            outsiderId = c.json.data.user._id;
-            createdUserIds.push(outsiderId);
-
-            // The validator accepts fullName and the model declares it, but
-            // registerUser used to destructure only email/username/password --
-            // so the name was accepted, answered 201, and silently dropped.
-            const named = await api("/auth/register", {
-                method: "POST",
-                body: {
-                    email: `verify-named-${STAMP}@test.local`,
-                    username: `vnamed${STAMP}`,
-                    password: "Passw0rd!",
-                    fullName: "Ada Lovelace",
-                },
-            });
-            assert.equal(named.status, 201, JSON.stringify(named.json));
-            assert.equal(
-                named.json.data.user.fullName,
-                "Ada Lovelace",
-                `fullName was not persisted: ${JSON.stringify(named.json.data.user)}`,
+            const me = expectStatus(
+                await api("/auth/current-user", { token: admin.accessToken }),
+                200,
             );
-            createdUserIds.push(named.json.data.user._id);
-        });
-
-        await t.test("current-user is GET and returns the caller", async () => {
-            const me = await api("/auth/current-user", { token: adminToken });
-            assert.equal(me.status, 200, JSON.stringify(me.json));
-            assert.equal(
-                me.json.data.email,
-                `verify-admin-${STAMP}@test.local`,
-            );
-        });
-
-        await t.test("create project as admin, add member", async () => {
-            const p = await api("/projects", {
-                method: "POST",
-                token: adminToken,
-                body: {
-                    name: `Verify Project ${STAMP}`,
-                    description: "smoke test",
-                },
-            });
-            assert.equal(p.status, 201, JSON.stringify(p.json));
-            projectId = p.json.data._id;
-            createdProjectIds.push(projectId);
-
-            const p2 = await api("/projects", {
-                method: "POST",
-                token: adminToken,
-                body: {
-                    name: `Verify Project Other ${STAMP}`,
-                    description: "unrelated",
-                },
-            });
-            assert.equal(p2.status, 201, JSON.stringify(p2.json));
-            otherProjectId = p2.json.data._id;
-            createdProjectIds.push(otherProjectId);
-
-            const m = await api(`/projects/${projectId}/members`, {
-                method: "POST",
-                token: adminToken,
-                body: {
-                    email: `verify-member-${STAMP}@test.local`,
-                    role: "member",
-                },
-            });
-            assert.equal(m.status, 201, JSON.stringify(m.json));
+            assert.equal(me.data.email, emailFor("admin"));
         });
 
         await t.test(
-            "getProjects aggregation returns sane shape with member count",
+            "registration is refused, not crashed, on bad input",
             async () => {
-                const list = await api("/projects", { token: adminToken });
-                assert.equal(list.status, 200, JSON.stringify(list.json));
-                const entry = list.json.data.find(
-                    (e) => e.project?._id === projectId,
-                );
-                assert.ok(
-                    entry,
-                    "created project not found in getProjects result",
-                );
+                // The unique index answers a duplicate, naming the field.
+                const duplicate = await post("/auth/register", undefined, {
+                    email: emailFor("admin"),
+                    username: `vdupe${STAMP}`,
+                    password: PASSWORD,
+                });
+                expectStatus(duplicate, 409);
                 assert.equal(
-                    entry.project.members,
-                    2,
-                    `expected 2 members, got ${JSON.stringify(entry)}`,
+                    duplicate.json.message,
+                    "That email is already in use",
                 );
-                assert.equal(entry.role, "admin");
+
+                const short = await post("/auth/register", undefined, {
+                    email: emailFor("short"),
+                    username: `vshort${STAMP}`,
+                    password: "Short1!",
+                });
+                expectStatus(short, 422);
             },
         );
 
         await t.test(
-            "RBAC: members list requires project membership",
+            "projects: create, add a member, list with counts",
             async () => {
-                const membersOk = await api(`/projects/${projectId}/members`, {
-                    token: memberToken,
-                });
-                assert.equal(
-                    membersOk.status,
-                    200,
-                    JSON.stringify(membersOk.json),
+                projectId = await createProject(
+                    admin.accessToken,
+                    `Verify ${STAMP}`,
+                );
+                otherProjectId = await createProject(
+                    admin.accessToken,
+                    `Verify other ${STAMP}`,
                 );
 
-                /*
-                 * member is not on otherProjectId at all, so
-                 * validateProjectPermission's ProjectMember lookup misses.
-                 * 404 rather than 403: a project someone is not a member of
-                 * has to look exactly like one that does not exist, or the
-                 * status itself confirms which ids are real.
-                 */
-                const cross = await api(`/projects/${otherProjectId}/members`, {
-                    token: memberToken,
-                });
-                assert.equal(cross.status, 404, JSON.stringify(cross.json));
-                assert.equal(cross.json.message, "Project not found");
+                expectStatus(
+                    await post(
+                        `/projects/${projectId}/members`,
+                        admin.accessToken,
+                        {
+                            email: emailFor("member"),
+                            role: "member",
+                        },
+                    ),
+                    201,
+                );
 
+                const list = expectStatus(
+                    await api("/projects", { token: admin.accessToken }),
+                    200,
+                );
+                const entry = list.data.find(
+                    (e) => e.project._id === projectId,
+                );
+                assert.equal(entry.role, "admin");
+                assert.equal(entry.project.members, 2);
+                assert.deepEqual(entry.project.taskCounts, {});
+            },
+        );
+
+        await t.test(
+            "project names belong to their team, not the whole server",
+            async () => {
+                // Another account may use the same name: names are not global.
+                await createProject(outsider.accessToken, `Verify ${STAMP}`);
+            },
+        );
+
+        await t.test(
+            "RBAC: a project you are not in looks like one that does not exist",
+            async () => {
+                expectStatus(
+                    await api(`/projects/${projectId}/members`, {
+                        token: member.accessToken,
+                    }),
+                    200,
+                );
+
+                const cross = expectStatus(
+                    await api(`/projects/${otherProjectId}/members`, {
+                        token: member.accessToken,
+                    }),
+                    404,
+                );
                 const invented = await api(
                     "/projects/6abb000000000000000000aa/members",
-                    { token: memberToken },
+                    {
+                        token: member.accessToken,
+                    },
                 );
-                assert.equal(
-                    invented.status,
-                    cross.status,
-                    "a project that exists must not be distinguishable from one that does not",
-                );
+                assert.equal(invented.status, cross.status);
                 assert.equal(invented.json.message, cross.json.message);
             },
         );
 
-        await t.test("member forbidden from creating tasks/notes", async () => {
-            const t1 = await api(`/tasks/${projectId}`, {
-                method: "POST",
-                token: memberToken,
-                body: { title: "should be forbidden" },
-            });
-            assert.equal(t1.status, 403, JSON.stringify(t1.json));
-
-            const n1 = await api(`/notes/${projectId}`, {
-                method: "POST",
-                token: memberToken,
-                body: { content: "should be forbidden" },
-            });
-            assert.equal(n1.status, 403, JSON.stringify(n1.json));
-        });
-
-        await t.test("admin creates task with attachment", async () => {
-            const form = new FormData();
-            form.append("title", "Verify Task");
-            form.append("description", "created by verify script");
-            form.append("status", "todo");
-            form.append("assignedTo", memberId);
-            form.append(
-                "attachments",
-                new Blob([Buffer.from("hello world")], { type: "text/plain" }),
-                "verify-note.txt",
-            );
-
-            const c = await api(`/tasks/${projectId}`, {
-                method: "POST",
-                token: adminToken,
-                form,
-            });
-            assert.equal(c.status, 201, JSON.stringify(c.json));
-            taskId = c.json.data._id;
-            createdTaskIds.push(taskId);
-            assert.equal(c.json.data.attachments.length, 1);
-            uploadedFiles.push(c.json.data.attachments[0].url.split("/").pop());
-
-            const fileRes = await fetch(c.json.data.attachments[0].url);
-            assert.equal(
-                fileRes.status,
-                200,
-                `attachment URL not reachable: ${c.json.data.attachments[0].url}`,
-            );
-
-            /*
-             * Attachments keep the hardening the avatar mount deliberately
-             * gives up. Arbitrary types reach this directory, so a file here
-             * must download rather than render, and must never be sniffed --
-             * the client links to these, it does not embed them.
-             */
-            assert.equal(
-                fileRes.headers.get("content-disposition"),
-                "attachment",
-                "an attachment must download, never render inline",
-            );
-            assert.equal(
-                fileRes.headers.get("x-content-type-options"),
-                "nosniff",
-            );
-        });
+        await t.test(
+            "RBAC: a member cannot create tasks or notes",
+            async () => {
+                expectStatus(
+                    await post(`/tasks/${projectId}`, member.accessToken, {
+                        title: "no",
+                    }),
+                    403,
+                );
+                expectStatus(
+                    await post(`/notes/${projectId}`, member.accessToken, {
+                        content: "no",
+                    }),
+                    403,
+                );
+            },
+        );
 
         await t.test(
-            "upload allowlist refuses executable content",
+            "tasks: create with an attachment, served as a download",
             async () => {
-                const svg = new FormData();
-                svg.append("title", "svg payload");
-                svg.append(
+                const form = formWith(
+                    "attachments",
+                    new Blob(["hello world"], { type: "text/plain" }),
+                    "verify-note.txt",
+                    {
+                        title: "Verify task",
+                        description: "created by verify",
+                        status: "todo",
+                        assignedTo: member.id,
+                    },
+                );
+                const res = expectStatus(
+                    await api(`/tasks/${projectId}`, {
+                        method: "POST",
+                        token: admin.accessToken,
+                        form,
+                    }),
+                    201,
+                );
+                taskId = res.data._id;
+                created.tasks.push(taskId);
+                assert.equal(res.data.attachments.length, 1);
+                assert.equal(
+                    res.data.priority,
+                    "medium",
+                    "priority defaults to medium",
+                );
+
+                const url = res.data.attachments[0].url;
+                created.files.push(url.split("/").pop());
+                const file = await fetch(url);
+                assert.equal(file.status, 200);
+                assert.equal(
+                    file.headers.get("content-disposition"),
+                    "attachment",
+                );
+                assert.equal(
+                    file.headers.get("x-content-type-options"),
+                    "nosniff",
+                );
+            },
+        );
+
+        await t.test(
+            "uploads: the allowlist refuses executable content",
+            async () => {
+                const svg = formWith(
                     "attachments",
                     new Blob(
                         [
@@ -346,787 +334,637 @@ test("V1 backend smoke test", async (t) => {
                         },
                     ),
                     "payload.svg",
+                    { title: "svg" },
                 );
-                const r1 = await api(`/tasks/${projectId}`, {
-                    method: "POST",
-                    token: adminToken,
-                    form: svg,
-                });
-                assert.equal(r1.status, 415, JSON.stringify(r1.json));
+                expectStatus(
+                    await api(`/tasks/${projectId}`, {
+                        method: "POST",
+                        token: admin.accessToken,
+                        form: svg,
+                    }),
+                    415,
+                );
 
-                // A permitted MIME type paired with a dangerous extension is also refused,
-                // since the client controls the MIME header but the extension decides how
-                // a browser would treat the file if it were ever served.
-                const spoofed = new FormData();
-                spoofed.append("title", "spoofed mime");
-                spoofed.append(
+                // An allowed MIME type paired with an extension it does not own.
+                const spoofed = formWith(
                     "attachments",
-                    new Blob(["<h1>hello</h1>"], { type: "text/plain" }),
+                    new Blob(["<h1>hi</h1>"], { type: "text/plain" }),
                     "payload.html",
+                    { title: "spoofed" },
                 );
-                const r2 = await api(`/tasks/${projectId}`, {
-                    method: "POST",
-                    token: adminToken,
-                    form: spoofed,
-                });
-                assert.equal(r2.status, 415, JSON.stringify(r2.json));
-
-                /*
-                 * multer reports the sixth file as an unexpected field on the
-                 * field it arrived under, so this used to answer "Unexpected
-                 * field" -- true of that file, and no use at all to the person
-                 * deciding which attachment to drop.
-                 */
-                const tooMany = new FormData();
-                tooMany.append("title", "six files");
-                for (let i = 0; i < 6; i += 1) {
-                    tooMany.append(
-                        "attachments",
-                        new Blob([new Uint8Array(8)], { type: "image/png" }),
-                        `f${i}.png`,
-                    );
-                }
-                const r3 = await api(`/tasks/${projectId}`, {
-                    method: "POST",
-                    token: adminToken,
-                    form: tooMany,
-                });
-                assert.equal(r3.status, 400, JSON.stringify(r3.json));
-                assert.match(
-                    r3.json.message,
-                    /at most 5 files/,
-                    `a count overflow must say so: ${JSON.stringify(r3.json)}`,
+                expectStatus(
+                    await api(`/tasks/${projectId}`, {
+                        method: "POST",
+                        token: admin.accessToken,
+                        form: spoofed,
+                    }),
+                    415,
                 );
 
-                // A genuinely unknown field still says exactly that.
-                const unknownField = new FormData();
-                unknownField.append("title", "unknown field");
-                unknownField.append(
-                    "avatar",
-                    new Blob([new Uint8Array(8)], { type: "image/png" }),
-                    "a.png",
+                const six = formWith(null, null, null, { title: "six files" });
+                for (let i = 0; i < 6; i += 1)
+                    six.append("attachments", png(8), `f${i}.png`);
+                const tooMany = expectStatus(
+                    await api(`/tasks/${projectId}`, {
+                        method: "POST",
+                        token: admin.accessToken,
+                        form: six,
+                    }),
+                    400,
                 );
-                const r4 = await api(`/tasks/${projectId}`, {
-                    method: "POST",
-                    token: adminToken,
-                    form: unknownField,
-                });
-                assert.equal(r4.status, 400, JSON.stringify(r4.json));
-                assert.match(r4.json.message, /Unexpected field/);
+                assert.match(tooMany.json.message, /at most 5 files/);
+
+                const unknown = expectStatus(
+                    await api(`/tasks/${projectId}`, {
+                        method: "POST",
+                        token: admin.accessToken,
+                        form: formWith("avatar", png(8), "a.png", {
+                            title: "wrong field",
+                        }),
+                    }),
+                    400,
+                );
+                assert.match(unknown.json.message, /Unexpected field/);
             },
         );
 
         await t.test(
-            "getTaskById aggregation populates assignedTo",
+            "tasks: detail joins the assignee; a member reads but cannot write",
             async () => {
-                const g = await api(`/tasks/${projectId}/t/${taskId}`, {
-                    token: adminToken,
-                });
-                assert.equal(g.status, 200, JSON.stringify(g.json));
+                const detail = expectStatus(
+                    await api(`/tasks/${projectId}/t/${taskId}`, {
+                        token: admin.accessToken,
+                    }),
+                    200,
+                );
                 assert.equal(
-                    g.json.data.assignedTo?.username,
+                    detail.data.assignedTo?.username,
                     `vmember${STAMP}`,
                 );
-            },
-        );
 
-        await t.test("member can view but not modify/delete task", async () => {
-            const list = await api(`/tasks/${projectId}`, {
-                token: memberToken,
-            });
-            assert.equal(list.status, 200, JSON.stringify(list.json));
-
-            const upd = await api(`/tasks/${projectId}/t/${taskId}`, {
-                method: "PUT",
-                token: memberToken,
-                body: { title: "hack" },
-            });
-            assert.equal(upd.status, 403, JSON.stringify(upd.json));
-
-            const del = await api(`/tasks/${projectId}/t/${taskId}`, {
-                method: "DELETE",
-                token: memberToken,
-            });
-            assert.equal(del.status, 403, JSON.stringify(del.json));
-        });
-
-        await t.test("subtask asymmetric permissions", async () => {
-            const c = await api(`/tasks/${projectId}/t/${taskId}/subtasks`, {
-                method: "POST",
-                token: adminToken,
-                body: { title: "sub 1" },
-            });
-            assert.equal(c.status, 201, JSON.stringify(c.json));
-            subTaskId = c.json.data._id;
-
-            const memberCreate = await api(
-                `/tasks/${projectId}/t/${taskId}/subtasks`,
-                {
-                    method: "POST",
-                    token: memberToken,
-                    body: { title: "nope" },
-                },
-            );
-            assert.equal(
-                memberCreate.status,
-                403,
-                JSON.stringify(memberCreate.json),
-            );
-
-            const memberToggle = await api(
-                `/tasks/${projectId}/st/${subTaskId}`,
-                {
-                    method: "PUT",
-                    token: memberToken,
-                    body: { isCompleted: true },
-                },
-            );
-            assert.equal(
-                memberToggle.status,
-                200,
-                JSON.stringify(memberToggle.json),
-            );
-            assert.equal(memberToggle.json.data.isCompleted, true);
-
-            const memberRename = await api(
-                `/tasks/${projectId}/st/${subTaskId}`,
-                {
-                    method: "PUT",
-                    token: memberToken,
-                    body: { title: "renamed by member" },
-                },
-            );
-            assert.equal(
-                memberRename.status,
-                403,
-                JSON.stringify(memberRename.json),
-            );
-
-            const adminRename = await api(
-                `/tasks/${projectId}/st/${subTaskId}`,
-                {
-                    method: "PUT",
-                    token: adminToken,
-                    body: { title: "renamed by admin" },
-                },
-            );
-            assert.equal(
-                adminRename.status,
-                200,
-                JSON.stringify(adminRename.json),
-            );
-            assert.equal(adminRename.json.data.title, "renamed by admin");
-
-            const memberDelete = await api(
-                `/tasks/${projectId}/st/${subTaskId}`,
-                {
-                    method: "DELETE",
-                    token: memberToken,
-                },
-            );
-            assert.equal(
-                memberDelete.status,
-                403,
-                JSON.stringify(memberDelete.json),
-            );
-
-            const adminDelete = await api(
-                `/tasks/${projectId}/st/${subTaskId}`,
-                {
-                    method: "DELETE",
-                    token: adminToken,
-                },
-            );
-            assert.equal(
-                adminDelete.status,
-                200,
-                JSON.stringify(adminDelete.json),
-            );
-        });
-
-        await t.test(
-            "notes: admin-only create/update/delete, all can view",
-            async () => {
-                const c = await api(`/notes/${projectId}`, {
-                    method: "POST",
-                    token: adminToken,
-                    body: { content: "note 1" },
-                });
-                assert.equal(c.status, 201, JSON.stringify(c.json));
-                noteId = c.json.data._id;
-
-                const memberList = await api(`/notes/${projectId}`, {
-                    token: memberToken,
-                });
-                assert.equal(
-                    memberList.status,
+                expectStatus(
+                    await api(`/tasks/${projectId}`, {
+                        token: member.accessToken,
+                    }),
                     200,
-                    JSON.stringify(memberList.json),
                 );
-
-                const memberUpdate = await api(
-                    `/notes/${projectId}/n/${noteId}`,
-                    {
-                        method: "PUT",
-                        token: memberToken,
-                        body: { content: "hack" },
-                    },
-                );
-                assert.equal(
-                    memberUpdate.status,
+                expectStatus(
+                    await put(
+                        `/tasks/${projectId}/t/${taskId}`,
+                        member.accessToken,
+                        { title: "x" },
+                    ),
                     403,
-                    JSON.stringify(memberUpdate.json),
                 );
-
-                const adminUpdate = await api(
-                    `/notes/${projectId}/n/${noteId}`,
-                    {
-                        method: "PUT",
-                        token: adminToken,
-                        body: { content: "updated" },
-                    },
-                );
-                assert.equal(
-                    adminUpdate.status,
-                    200,
-                    JSON.stringify(adminUpdate.json),
-                );
-
-                const memberDelete = await api(
-                    `/notes/${projectId}/n/${noteId}`,
-                    {
-                        method: "DELETE",
-                        token: memberToken,
-                    },
-                );
-                assert.equal(
-                    memberDelete.status,
+                expectStatus(
+                    await del(
+                        `/tasks/${projectId}/t/${taskId}`,
+                        member.accessToken,
+                    ),
                     403,
-                    JSON.stringify(memberDelete.json),
-                );
-
-                const adminDelete = await api(
-                    `/notes/${projectId}/n/${noteId}`,
-                    {
-                        method: "DELETE",
-                        token: adminToken,
-                    },
-                );
-                assert.equal(
-                    adminDelete.status,
-                    200,
-                    JSON.stringify(adminDelete.json),
                 );
             },
         );
 
         await t.test(
-            "invalid/unauthorized requests handled correctly",
+            "tasks: priority and due date are validated, stored and clearable",
             async () => {
-                const noAuth = await api(`/projects/${projectId}`);
-                assert.equal(noAuth.status, 401, JSON.stringify(noAuth.json));
-
-                const badId = await api(
-                    `/tasks/${projectId}/t/not-a-valid-object-id`,
-                    { token: adminToken },
-                );
-                assert.equal(badId.status, 400, JSON.stringify(badId.json));
-                assert.equal(typeof badId.json?.message, "string");
-
-                const missingTitle = await api(`/tasks/${projectId}`, {
-                    method: "POST",
-                    token: adminToken,
-                    body: { description: "no title" },
+                const task = await createTask(projectId, admin.accessToken, {
+                    title: "Due soon",
+                    priority: "high",
+                    dueDate: "2026-10-03",
+                    assignedTo: member.id,
                 });
-                assert.equal(
-                    missingTitle.status,
+                assert.equal(task.priority, "high");
+                assert.equal(task.dueDate, "2026-10-03T00:00:00.000Z");
+
+                expectStatus(
+                    await post(`/tasks/${projectId}`, admin.accessToken, {
+                        title: "x",
+                        priority: "urgent",
+                    }),
                     422,
-                    JSON.stringify(missingTitle.json),
                 );
+                expectStatus(
+                    await post(`/tasks/${projectId}`, admin.accessToken, {
+                        title: "x",
+                        dueDate: "soon",
+                    }),
+                    422,
+                );
+
+                // null clears an optional field: this is how a task is unassigned.
+                const cleared = expectStatus(
+                    await put(
+                        `/tasks/${projectId}/t/${task._id}`,
+                        admin.accessToken,
+                        {
+                            assignedTo: null,
+                            dueDate: null,
+                        },
+                    ),
+                    200,
+                );
+                assert.equal(cleared.data.assignedTo, undefined);
+                assert.equal(cleared.data.dueDate, undefined);
+                assert.equal(
+                    cleared.data.priority,
+                    "high",
+                    "untouched fields stay",
+                );
+
+                // Multipart cannot say null, so "" means the same thing there.
+                const reassigned = expectStatus(
+                    await put(
+                        `/tasks/${projectId}/t/${task._id}`,
+                        admin.accessToken,
+                        { assignedTo: member.id },
+                    ),
+                    200,
+                );
+                assert.equal(reassigned.data.assignedTo, member.id);
+                const viaForm = expectStatus(
+                    await api(`/tasks/${projectId}/t/${task._id}`, {
+                        method: "PUT",
+                        token: admin.accessToken,
+                        form: formWith(null, null, null, { assignedTo: "" }),
+                    }),
+                    200,
+                );
+                assert.equal(viaForm.data.assignedTo, undefined);
             },
         );
 
-        await t.test("bad input is refused, not crashed", async () => {
-            /*
-             * Every case here answered 500 before. A 5xx tells the caller
-             * the server broke when in fact the request did, gives them
-             * nothing to correct, and buries real faults in the error rate.
-             */
-            const objectPassword = await api("/auth/login", {
-                method: "POST",
-                body: {
-                    email: `verify-admin-${STAMP}@test.local`,
-                    password: { $ne: null },
-                },
-            });
-            assert.equal(
-                objectPassword.status,
+        await t.test("projects: the list counts tasks by status", async () => {
+            const list = await api("/projects", { token: admin.accessToken });
+            const entry = list.data.find((e) => e.project._id === projectId);
+            assert.deepEqual(entry.project.taskCounts, { todo: 2 });
+        });
+
+        await t.test(
+            "subtasks: anyone may tick, only managers rename or remove",
+            async () => {
+                const sub = expectStatus(
+                    await post(
+                        `/tasks/${projectId}/t/${taskId}/subtasks`,
+                        admin.accessToken,
+                        { title: "sub 1" },
+                    ),
+                    201,
+                ).data;
+                const subPath = `/tasks/${projectId}/st/${sub._id}`;
+
+                expectStatus(
+                    await post(
+                        `/tasks/${projectId}/t/${taskId}/subtasks`,
+                        member.accessToken,
+                        { title: "no" },
+                    ),
+                    403,
+                );
+
+                const ticked = expectStatus(
+                    await put(subPath, member.accessToken, {
+                        isCompleted: true,
+                    }),
+                    200,
+                );
+                assert.equal(ticked.data.isCompleted, true);
+
+                expectStatus(
+                    await put(subPath, member.accessToken, {
+                        title: "renamed",
+                    }),
+                    403,
+                );
+                const renamed = expectStatus(
+                    await put(subPath, admin.accessToken, { title: "renamed" }),
+                    200,
+                );
+                assert.equal(renamed.data.title, "renamed");
+
+                expectStatus(await del(subPath, member.accessToken), 403);
+                expectStatus(await del(subPath, admin.accessToken), 200);
+            },
+        );
+
+        await t.test("notes: everyone reads, only admins write", async () => {
+            const note = expectStatus(
+                await post(`/notes/${projectId}`, admin.accessToken, {
+                    content: "note 1",
+                }),
+                201,
+            ).data;
+            const notePath = `/notes/${projectId}/n/${note._id}`;
+
+            expectStatus(
+                await api(`/notes/${projectId}`, { token: member.accessToken }),
+                200,
+            );
+            expectStatus(
+                await put(notePath, member.accessToken, { content: "x" }),
+                403,
+            );
+            expectStatus(
+                await put(notePath, admin.accessToken, { content: "updated" }),
+                200,
+            );
+            expectStatus(await del(notePath, member.accessToken), 403);
+            expectStatus(await del(notePath, admin.accessToken), 200);
+        });
+
+        await t.test("bad input answers 4xx, never 500", async () => {
+            expectStatus(await api(`/projects/${projectId}`), 401);
+
+            const badId = expectStatus(
+                await api(`/tasks/${projectId}/t/not-an-object-id`, {
+                    token: admin.accessToken,
+                }),
+                400,
+            );
+            assert.equal(typeof badId.json.message, "string");
+
+            expectStatus(
+                await post(`/tasks/${projectId}`, admin.accessToken, {
+                    description: "no title",
+                }),
                 422,
-                `a non-string password must not reach bcrypt: ${JSON.stringify(objectPassword.json)}`,
             );
 
-            // express.json caps the body at 16kb and throws its own error,
-            // which used to fall past every branch of the error handler.
-            const tooLarge = await api("/projects", {
-                method: "POST",
-                token: adminToken,
-                body: { name: "x".repeat(100_000), description: "d" },
-            });
-            assert.equal(
-                tooLarge.status,
+            // A non-string password must never reach bcrypt.compare, which throws.
+            expectStatus(
+                await post("/auth/login", undefined, {
+                    email: emailFor("admin"),
+                    password: { $ne: null },
+                }),
+                422,
+            );
+
+            expectStatus(
+                await post("/projects", admin.accessToken, {
+                    name: "x".repeat(100_000),
+                }),
                 413,
-                `an oversized body must be a 413: ${JSON.stringify(tooLarge.json)}`,
             );
 
             const malformed = await fetch(`${BASE}/projects`, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
-                    Authorization: `Bearer ${adminToken}`,
+                    Authorization: `Bearer ${admin.accessToken}`,
                 },
                 body: "{not json",
             });
-            assert.equal(
-                malformed.status,
-                400,
-                "unparseable JSON must be a 400",
+            assert.equal(malformed.status, 400);
+
+            expectStatus(
+                await post("/projects", admin.accessToken, { name: "   " }),
+                422,
             );
+        });
 
-            // Trimmed by the validator, so Mongoose's own required check no
-            // longer answers for it with "Path `name` is required."
-            const blankName = await api("/projects", {
-                method: "POST",
-                token: adminToken,
-                body: { name: "   ", description: "d" },
-            });
-            assert.equal(blankName.status, 422, JSON.stringify(blankName.json));
-
-            /*
-             * A password is an exact secret. Registration used to trim it
-             * while login did not, so anyone whose password ended in a
-             * space -- pasted, or generated -- created an account that
-             * refused them with "Invalid credentials" and no clue why.
-             */
+        await t.test("passwords are exact: never trimmed", async () => {
             const padded = " Passw0rd! ";
-            const paddedEmail = `verify-pad-${STAMP}@test.local`;
-            const registered = await api("/auth/register", {
-                method: "POST",
-                body: {
-                    email: paddedEmail,
-                    username: `vpad${STAMP}`,
+            await register("pad", { password: padded });
+            expectStatus(
+                await post("/auth/login", undefined, {
+                    email: emailFor("pad"),
                     password: padded,
-                },
-            });
-            assert.equal(
-                registered.status,
-                201,
-                JSON.stringify(registered.json),
-            );
-            createdUserIds.push(registered.json.data.user._id);
-
-            const exact = await api("/auth/login", {
-                method: "POST",
-                body: { email: paddedEmail, password: padded },
-            });
-            assert.equal(
-                exact.status,
+                }),
                 200,
-                `the password as typed must sign in: ${JSON.stringify(exact.json)}`,
             );
-
-            const trimmed = await api("/auth/login", {
-                method: "POST",
-                body: { email: paddedEmail, password: padded.trim() },
-            });
-            assert.equal(
-                trimmed.status,
+            expectStatus(
+                await post("/auth/login", undefined, {
+                    email: emailFor("pad"),
+                    password: padded.trim(),
+                }),
                 401,
-                "a different string must not sign in",
             );
         });
 
         await t.test(
-            "a task cannot be assigned to someone outside the project",
+            "a task cannot be assigned outside its project",
             async () => {
-                // `outsiderId` belongs to a registered user who was never added
-                // to this project, so the id is well-formed and the validator
-                // has nothing to object to -- only a membership lookup can
-                // catch it.
-                const created = await api(`/tasks/${projectId}`, {
-                    method: "POST",
-                    token: adminToken,
-                    body: { title: "for a stranger", assignedTo: outsiderId },
-                });
-                assert.equal(created.status, 400, JSON.stringify(created.json));
-
-                const updated = await api(`/tasks/${projectId}/t/${taskId}`, {
-                    method: "PUT",
-                    token: adminToken,
-                    body: { assignedTo: outsiderId },
-                });
-                assert.equal(updated.status, 400, JSON.stringify(updated.json));
-
-                // A real member is still assignable.
-                const ok = await api(`/tasks/${projectId}/t/${taskId}`, {
-                    method: "PUT",
-                    token: adminToken,
-                    body: { assignedTo: memberId },
-                });
-                assert.equal(ok.status, 200, JSON.stringify(ok.json));
+                expectStatus(
+                    await post(`/tasks/${projectId}`, admin.accessToken, {
+                        title: "x",
+                        assignedTo: outsider.id,
+                    }),
+                    400,
+                );
+                expectStatus(
+                    await put(
+                        `/tasks/${projectId}/t/${taskId}`,
+                        admin.accessToken,
+                        { assignedTo: outsider.id },
+                    ),
+                    400,
+                );
+                expectStatus(
+                    await put(
+                        `/tasks/${projectId}/t/${taskId}`,
+                        admin.accessToken,
+                        { assignedTo: member.id },
+                    ),
+                    200,
+                );
             },
         );
 
-        await t.test("a project cannot be left without an admin", async () => {
-            // Every management route is gated on the admin role, so a
-            // project whose last admin steps down can never be repaired --
-            // not renamed, not deleted, not given a new admin.
-            const demote = await api(
-                `/projects/${projectId}/members/${adminId}`,
-                {
-                    method: "PUT",
-                    token: adminToken,
-                    body: { newRole: "member" },
-                },
-            );
-            assert.equal(demote.status, 409, JSON.stringify(demote.json));
+        await t.test(
+            "my tasks: only mine, only from projects I am still in",
+            async () => {
+                // A second project, where the member is assigned work.
+                const sideProject = await createProject(
+                    admin.accessToken,
+                    `Verify side ${STAMP}`,
+                );
+                expectStatus(
+                    await post(
+                        `/projects/${sideProject}/members`,
+                        admin.accessToken,
+                        {
+                            email: emailFor("member"),
+                            role: "member",
+                        },
+                    ),
+                    201,
+                );
+                const sideTask = await createTask(
+                    sideProject,
+                    admin.accessToken,
+                    {
+                        title: "Side work",
+                        assignedTo: member.id,
+                    },
+                );
+                await createTask(sideProject, admin.accessToken, {
+                    title: "Someone else's",
+                });
 
-            /*
-             * The third way to write a role, and the one that used to have no
-             * guard at all. POST /members was an upsert that $set the role
-             * unconditionally, so an admin who typed their own address here
-             * demoted themselves and locked the whole project -- and one admin
-             * could quietly demote another the same way, going around the
-             * check above. Adding now only ever adds.
-             */
-            const reAddSelf = await api(`/projects/${projectId}/members`, {
-                method: "POST",
-                token: adminToken,
-                body: {
-                    email: `verify-admin-${STAMP}@test.local`,
+                const mine = expectStatus(
+                    await api("/me/tasks", { token: member.accessToken }),
+                    200,
+                );
+                const titles = mine.data.map((task) => task.title);
+                assert.ok(titles.includes("Side work"), JSON.stringify(titles));
+                assert.ok(
+                    titles.includes("Verify task"),
+                    JSON.stringify(titles),
+                );
+                assert.ok(!titles.includes("Someone else's"));
+                const side = mine.data.find(
+                    (task) => task._id === sideTask._id,
+                );
+                assert.equal(side.project.name, `Verify side ${STAMP}`);
+
+                // Leaving a project unassigns its tasks, so they leave this list.
+                expectStatus(
+                    await del(
+                        `/projects/${sideProject}/members/${member.id}`,
+                        admin.accessToken,
+                    ),
+                    200,
+                );
+                const after = await api(
+                    `/tasks/${sideProject}/t/${sideTask._id}`,
+                    { token: admin.accessToken },
+                );
+                assert.equal(after.data.assignedTo, undefined);
+                const mineAfter = await api("/me/tasks", {
+                    token: member.accessToken,
+                });
+                assert.ok(
+                    !mineAfter.data.some((task) => task._id === sideTask._id),
+                );
+
+                expectStatus(await api("/me/tasks"), 401);
+            },
+        );
+
+        await t.test("a project always keeps an admin", async () => {
+            const members = `/projects/${projectId}/members`;
+            const self = `${members}/${admin.id}`;
+
+            expectStatus(
+                await put(self, admin.accessToken, { newRole: "member" }),
+                409,
+            );
+
+            // Adding only ever inserts: it cannot rewrite (or demote) a role.
+            expectStatus(
+                await post(members, admin.accessToken, {
+                    email: emailFor("admin"),
                     role: "member",
-                },
-            });
-            assert.equal(
-                reAddSelf.status,
+                }),
                 409,
-                `adding an existing member must not rewrite their role: ${JSON.stringify(reAddSelf.json)}`,
             );
-
-            const reAddOther = await api(`/projects/${projectId}/members`, {
-                method: "POST",
-                token: adminToken,
-                body: {
-                    email: `verify-member-${STAMP}@test.local`,
+            expectStatus(
+                await post(members, admin.accessToken, {
+                    email: emailFor("member"),
                     role: "admin",
-                },
-            });
-            assert.equal(
-                reAddOther.status,
+                }),
                 409,
-                `adding an existing member must not rewrite their role: ${JSON.stringify(reAddOther.json)}`,
             );
-
-            // Still exactly one row for that pair, still the role it had.
-            const roster = await api(`/projects/${projectId}/members`, {
-                token: adminToken,
-            });
-            const rows = roster.json.data.filter(
-                (entry) => entry.user?._id === adminId,
+            const roster = await api(members, { token: admin.accessToken });
+            const rows = roster.data.filter(
+                (entry) => entry.user?._id === admin.id,
             );
-            assert.equal(rows.length, 1, "a member must have one row");
+            assert.equal(rows.length, 1);
             assert.equal(rows[0].role, "admin");
 
-            const remove = await api(
-                `/projects/${projectId}/members/${adminId}`,
-                { method: "DELETE", token: adminToken },
+            expectStatus(await del(self, admin.accessToken), 409);
+            expectStatus(
+                await put(
+                    `${members}/6abb000000000000000000aa`,
+                    admin.accessToken,
+                    { newRole: "admin" },
+                ),
+                404,
             );
-            assert.equal(remove.status, 409, JSON.stringify(remove.json));
-
-            // The admin is still there and still in charge.
-            const stillAdmin = await api(`/projects/${projectId}`, {
-                method: "PUT",
-                token: adminToken,
-                body: { name: `verify-${STAMP} renamed`, description: "x" },
-            });
-            assert.equal(
-                stillAdmin.status,
+            expectStatus(
+                await put(`/projects/${projectId}`, admin.accessToken, {
+                    name: `Verify ${STAMP} renamed`,
+                }),
                 200,
-                JSON.stringify(stillAdmin.json),
             );
 
-            // With a second admin in place the first one may step down,
-            // and may then be removed outright.
-            const promote = await api(
-                `/projects/${projectId}/members/${memberId}`,
-                {
-                    method: "PUT",
-                    token: adminToken,
-                    body: { newRole: "admin" },
-                },
-            );
-            assert.equal(promote.status, 200, JSON.stringify(promote.json));
-
-            const stepDown = await api(
-                `/projects/${projectId}/members/${adminId}`,
-                {
-                    method: "PUT",
-                    token: adminToken,
-                    body: { newRole: "member" },
-                },
-            );
-            assert.equal(stepDown.status, 200, JSON.stringify(stepDown.json));
-
-            // Restore the original roles: later subtests, and the cleanup
-            // block, both still need this account to be an admin here.
-            const restore = await api(
-                `/projects/${projectId}/members/${adminId}`,
-                {
-                    method: "PUT",
-                    token: memberToken,
-                    body: { newRole: "admin" },
-                },
-            );
-            assert.equal(restore.status, 200, JSON.stringify(restore.json));
-
-            const demoteOther = await api(
-                `/projects/${projectId}/members/${memberId}`,
-                {
-                    method: "PUT",
-                    token: adminToken,
-                    body: { newRole: "member" },
-                },
-            );
-            assert.equal(
-                demoteOther.status,
+            // With a second admin, the first may step down; then restore both.
+            expectStatus(
+                await put(`${members}/${member.id}`, admin.accessToken, {
+                    newRole: "admin",
+                }),
                 200,
-                JSON.stringify(demoteOther.json),
+            );
+            expectStatus(
+                await put(self, admin.accessToken, { newRole: "member" }),
+                200,
+            );
+            expectStatus(
+                await put(self, member.accessToken, { newRole: "admin" }),
+                200,
+            );
+            expectStatus(
+                await put(`${members}/${member.id}`, admin.accessToken, {
+                    newRole: "member",
+                }),
+                200,
             );
         });
 
         await t.test(
-            "profile name can be changed, identity cannot",
+            "profile: the name is editable, identity is not",
             async () => {
-                const updated = await api("/auth/profile", {
-                    method: "PATCH",
-                    token: memberToken,
-                    body: { fullName: "  Grace Hopper  " },
-                });
-                assert.equal(updated.status, 200, JSON.stringify(updated.json));
-                assert.equal(updated.json.data.fullName, "Grace Hopper");
+                const updated = expectStatus(
+                    await patch("/auth/profile", member.accessToken, {
+                        fullName: "  Grace Hopper  ",
+                    }),
+                    200,
+                );
+                assert.equal(updated.data.fullName, "Grace Hopper");
+                assert.equal(updated.data.password, undefined);
 
-                // The change is what /auth/current-user reports afterwards; the
-                // client caches that response for its header and avatars.
                 const me = await api("/auth/current-user", {
-                    token: memberToken,
+                    token: member.accessToken,
                 });
-                assert.equal(me.json.data.fullName, "Grace Hopper");
+                assert.equal(me.data.fullName, "Grace Hopper");
 
-                // Never echo the secrets back, the same as every other auth route.
-                assert.equal(updated.json.data.password, undefined);
-                assert.equal(updated.json.data.refreshToken, undefined);
+                expectStatus(
+                    await patch("/auth/profile", member.accessToken, {
+                        fullName: "   ",
+                    }),
+                    422,
+                );
+                expectStatus(
+                    await patch("/auth/profile", member.accessToken, {
+                        fullName: "x".repeat(81),
+                    }),
+                    422,
+                );
 
-                const blank = await api("/auth/profile", {
-                    method: "PATCH",
-                    token: memberToken,
-                    body: { fullName: "   " },
-                });
-                assert.equal(blank.status, 422, JSON.stringify(blank.json));
-
-                const tooLong = await api("/auth/profile", {
-                    method: "PATCH",
-                    token: memberToken,
-                    body: { fullName: "x".repeat(81) },
-                });
-                assert.equal(tooLong.status, 422, JSON.stringify(tooLong.json));
-
-                // username and email are identity, not profile: one is the handle
-                // teammates see, the other is where invitations and password
-                // resets are sent. Neither may ride along on this route.
-                const sneaky = await api("/auth/profile", {
-                    method: "PATCH",
-                    token: memberToken,
-                    body: {
+                const sneaky = expectStatus(
+                    await patch("/auth/profile", member.accessToken, {
                         fullName: "Grace Hopper",
                         username: `hijacked${STAMP}`,
                         email: `hijacked-${STAMP}@test.local`,
                         isEmailVerified: true,
-                        role: "admin",
-                    },
-                });
-                assert.equal(sneaky.status, 200, JSON.stringify(sneaky.json));
-                assert.equal(
-                    sneaky.json.data.username,
-                    `vmember${STAMP}`,
-                    "username must not be writable through the profile route",
+                    }),
+                    200,
                 );
-                assert.equal(
-                    sneaky.json.data.email,
-                    `verify-member-${STAMP}@test.local`,
-                    "email must not be writable through the profile route",
-                );
+                assert.equal(sneaky.data.username, `vmember${STAMP}`);
+                assert.equal(sneaky.data.email, emailFor("member"));
 
-                const anonymous = await api("/auth/profile", {
-                    method: "PATCH",
-                    body: { fullName: "Nobody" },
-                });
-                assert.equal(
-                    anonymous.status,
+                expectStatus(
+                    await patch("/auth/profile", undefined, {
+                        fullName: "Nobody",
+                    }),
                     401,
-                    JSON.stringify(anonymous.json),
                 );
             },
         );
 
-        await t.test("a profile photo replaces the one before it", async () => {
-            const png = (bytes) =>
-                new Blob([new Uint8Array(bytes)], { type: "image/png" });
-            const form = (blob, name, field = "avatar") => {
-                const f = new FormData();
-                f.append(field, blob, name);
-                return f;
-            };
+        await t.test(
+            "avatar: images only, replaced in place, rendered inline",
+            async () => {
+                const upload = (form, { anonymous = false } = {}) =>
+                    api("/auth/avatar", {
+                        method: "PATCH",
+                        token: anonymous ? undefined : member.accessToken,
+                        form,
+                    });
 
-            const nothing = await api("/auth/avatar", {
-                method: "PATCH",
-                token: memberToken,
-                form: new FormData(),
-            });
-            assert.equal(nothing.status, 400, JSON.stringify(nothing.json));
-
-            // The attachment allowlist takes PDFs and .txt; this one must not,
-            // because whatever lands here is rendered in an <img>.
-            const pdf = await api("/auth/avatar", {
-                method: "PATCH",
-                token: memberToken,
-                form: form(
-                    new Blob(["%PDF-1.4"], { type: "application/pdf" }),
-                    "cv.pdf",
-                ),
-            });
-            assert.equal(pdf.status, 415, JSON.stringify(pdf.json));
-
-            const svg = await api("/auth/avatar", {
-                method: "PATCH",
-                token: memberToken,
-                form: form(
-                    new Blob(["<svg onload=alert(1)>"], {
-                        type: "image/svg+xml",
+                expectStatus(await upload(new FormData()), 400);
+                expectStatus(
+                    await upload(
+                        formWith(
+                            "avatar",
+                            new Blob(["%PDF-1.4"], { type: "application/pdf" }),
+                            "cv.pdf",
+                        ),
+                    ),
+                    415,
+                );
+                expectStatus(
+                    await upload(
+                        formWith(
+                            "avatar",
+                            new Blob(["<svg onload=alert(1)>"], {
+                                type: "image/svg+xml",
+                            }),
+                            "x.svg",
+                        ),
+                    ),
+                    415,
+                );
+                expectStatus(
+                    await upload(formWith("avatar", png(600_000), "huge.png")),
+                    413,
+                );
+                expectStatus(
+                    await upload(formWith("avatar", png(32), "a.png"), {
+                        anonymous: true,
                     }),
-                    "x.svg",
-                ),
-            });
-            assert.equal(svg.status, 415, JSON.stringify(svg.json));
-
-            const huge = await api("/auth/avatar", {
-                method: "PATCH",
-                token: memberToken,
-                form: form(png(600_000), "huge.png"),
-            });
-            assert.equal(huge.status, 413, JSON.stringify(huge.json));
-
-            const anonymous = await api("/auth/avatar", {
-                method: "PATCH",
-                form: form(png(32), "a.png"),
-            });
-            assert.equal(anonymous.status, 401, JSON.stringify(anonymous.json));
-
-            const first = await api("/auth/avatar", {
-                method: "PATCH",
-                token: memberToken,
-                form: form(png(32), "me.png"),
-            });
-            assert.equal(first.status, 200, JSON.stringify(first.json));
-            const firstUrl = first.json.data.avatar.url;
-            assert.ok(firstUrl, JSON.stringify(first.json.data));
-
-            // The client contract is the URL. Where the bytes live is the
-            // server's business, and sending it invites a dependency on it.
-            assert.deepEqual(Object.keys(first.json.data.avatar), ["url"]);
-
-            const second = await api("/auth/avatar", {
-                method: "PATCH",
-                token: memberToken,
-                form: form(png(48), "me2.png"),
-            });
-            assert.equal(second.status, 200, JSON.stringify(second.json));
-            const secondUrl = second.json.data.avatar.url;
-            assert.notEqual(
-                secondUrl,
-                firstUrl,
-                "a replacement must not reuse the old URL",
-            );
-
-            /*
-             * Only checkable on the local driver, which is what CI runs: an
-             * avatar is replaced far more often than it is deleted, so without
-             * this every change would strand a blob forever.
-             */
-            if (firstUrl.startsWith(process.env.SERVER_URL)) {
-                uploadedAvatars.push(secondUrl.split("/").pop());
-
-                const orphan = await fetch(firstUrl);
-                assert.equal(
-                    orphan.status,
-                    404,
-                    "the replaced image must not still be on disk",
-                );
-                const current = await fetch(secondUrl);
-                assert.equal(current.status, 200, "the new image must serve");
-
-                /*
-                 * The headers are the whole point, and the reason this was
-                 * broken in a browser while every test passed: a photo served
-                 * with helmet's default Cross-Origin-Resource-Policy:
-                 * same-origin is blocked outright when the client is on
-                 * another origin, and one served Content-Disposition:
-                 * attachment downloads instead of rendering. fetch() from Node
-                 * honours neither, so only an <img> in a real browser ever
-                 * noticed. These assertions stand in for that.
-                 */
-                assert.equal(
-                    current.headers.get("cross-origin-resource-policy"),
-                    "cross-origin",
-                    "an avatar must be embeddable from the client's origin",
-                );
-                assert.equal(
-                    current.headers.get("content-disposition"),
-                    null,
-                    "an avatar must render, not download",
-                );
-                assert.equal(
-                    current.headers.get("x-content-type-options"),
-                    "nosniff",
-                    "a file that is not really an image must not be sniffed",
+                    401,
                 );
 
-                // The permissive mount must not reach an attachment, or the
-                // hardening on /images could be bypassed by asking for it
-                // under the other path.
-                const crossed = await fetch(
-                    secondUrl.replace("/avatars/", "/images/"),
+                const first = expectStatus(
+                    await upload(formWith("avatar", png(32), "me.png")),
+                    200,
                 );
-                assert.equal(
-                    crossed.status,
-                    404,
-                    "the two upload directories must stay separate",
-                );
-            }
+                const firstUrl = first.data.avatar.url;
+                // The contract is the URL; where the bytes live is the server's business.
+                assert.deepEqual(Object.keys(first.data.avatar), ["url"]);
 
-            const me = await api("/auth/current-user", { token: memberToken });
-            assert.equal(me.json.data.avatar.url, secondUrl);
-        });
+                const second = expectStatus(
+                    await upload(formWith("avatar", png(48), "me2.png")),
+                    200,
+                );
+                const secondUrl = second.data.avatar.url;
+                assert.notEqual(secondUrl, firstUrl);
+
+                // Only checkable on the local driver, which is what CI runs.
+                if (firstUrl.startsWith(process.env.SERVER_URL)) {
+                    created.avatars.push(secondUrl.split("/").pop());
+                    assert.equal(
+                        (await fetch(firstUrl)).status,
+                        404,
+                        "the replaced image is deleted",
+                    );
+
+                    const current = await fetch(secondUrl);
+                    assert.equal(current.status, 200);
+                    // What a real <img> on another origin needs, which fetch() ignores.
+                    assert.equal(
+                        current.headers.get("cross-origin-resource-policy"),
+                        "cross-origin",
+                    );
+                    assert.equal(
+                        current.headers.get("content-disposition"),
+                        null,
+                    );
+                    assert.equal(
+                        current.headers.get("x-content-type-options"),
+                        "nosniff",
+                    );
+
+                    const crossed = await fetch(
+                        secondUrl.replace("/avatars/", "/images/"),
+                    );
+                    assert.equal(
+                        crossed.status,
+                        404,
+                        "the two upload directories stay apart",
+                    );
+                }
+
+                const me = await api("/auth/current-user", {
+                    token: member.accessToken,
+                });
+                assert.equal(me.data.avatar.url, secondUrl);
+            },
+        );
 
         await t.test("no user-shaped response carries a secret", async () => {
-            /*
-             * Every route that answers with a user went through a
-             * hand-written .select("-password -refreshToken ...") denylist,
-             * one per query. GET /auth/current-user's list was written
-             * before the forgot-password fields existed and never
-             * revisited, so it returned forgotPasswordToken and
-             * forgotPasswordExpiry to the browser. The fix is a toJSON
-             * transform on the schema; this test is the thing that notices
-             * when the next field is added to the model.
-             */
             const PRIVATE = [
                 "password",
                 "refreshToken",
@@ -1136,13 +974,8 @@ test("V1 backend smoke test", async (t) => {
                 "emailVerificationExpiry",
                 "credentialsChangedAt",
             ];
-            /*
-             * Checking the known secrets is not enough on its own: the whole
-             * failure mode here is a field nobody thought to list. So the
-             * public shape is asserted exactly, and adding anything to the
-             * model fails this test until it has been classified -- public
-             * (add it here) or private (add it to the schema's transform).
-             */
+            // Asserted exactly, so a field added to the model fails here until
+            // it is classified as public (listed) or private (stripped).
             const PUBLIC = [
                 "_id",
                 "avatar",
@@ -1154,406 +987,231 @@ test("V1 backend smoke test", async (t) => {
                 "updatedAt",
                 "__v",
             ];
-            const assertClean = (where, payload) => {
-                assert.ok(payload, `${where} returned no user`);
+            const assertClean = (where, user) => {
+                assert.ok(user, `${where} returned no user`);
                 for (const field of PRIVATE) {
                     assert.equal(
-                        payload[field],
+                        user[field],
                         undefined,
-                        `${where} leaks ${field}: ${JSON.stringify(payload)}`,
+                        `${where} leaks ${field}`,
                     );
                 }
-                const unexpected = Object.keys(payload).filter(
+                const unexpected = Object.keys(user).filter(
                     (key) => !PUBLIC.includes(key),
                 );
                 assert.deepEqual(
                     unexpected,
                     [],
-                    `${where} returned fields that are neither public nor stripped: ${unexpected.join(", ")}`,
+                    `${where} returned unclassified fields`,
                 );
             };
 
-            const email = `verify-leak-${STAMP}@test.local`;
-            const password = "Passw0rd!";
-
-            const registered = await api("/auth/register", {
-                method: "POST",
-                body: {
-                    email,
-                    username: `vleak${STAMP}`,
-                    password,
-                    fullName: "Leak Probe",
-                },
-            });
-            assert.equal(
-                registered.status,
-                201,
-                JSON.stringify(registered.json),
+            assertClean(
+                "register",
+                await register("leak", { fullName: "Leak Probe" }),
             );
-            createdUserIds.push(registered.json.data.user._id);
-            assertClean("register", registered.json.data.user);
-
-            // Populates forgotPasswordToken/Expiry on the document, which
-            // is what current-user used to hand back.
-            await api("/auth/forgot-password", {
-                method: "POST",
-                body: { email },
+            // Populates the reset fields, which current-user once returned.
+            await post("/auth/forgot-password", undefined, {
+                email: emailFor("leak"),
             });
 
-            const login = await api("/auth/login", {
-                method: "POST",
-                body: { email, password },
-            });
-            assert.equal(login.status, 200, JSON.stringify(login.json));
-            assertClean("login", login.json.data.user);
-            const token = login.json.data.accessToken;
-
+            const session = await login("leak");
+            assertClean("login", session.user);
             assertClean(
                 "current-user",
-                (await api("/auth/current-user", { token })).json.data,
+                (
+                    await api("/auth/current-user", {
+                        token: session.accessToken,
+                    })
+                ).data,
             );
             assertClean(
                 "profile",
                 (
-                    await api("/auth/profile", {
-                        method: "PATCH",
-                        token,
-                        body: { fullName: "Leak Probe" },
+                    await patch("/auth/profile", session.accessToken, {
+                        fullName: "Leak Probe",
                     })
-                ).json.data,
+                ).data,
             );
 
-            // credentialsChangedAt only exists once a password changes.
-            const changed = await api("/auth/change-password", {
-                method: "POST",
-                token,
-                body: { oldPassword: password, newPassword: "Str0nger!" },
-            });
-            assert.equal(changed.status, 200, JSON.stringify(changed.json));
-
-            const after = await api("/auth/login", {
-                method: "POST",
-                body: { email, password: "Str0nger!" },
-            });
-            assertClean("login after a change", after.json.data.user);
+            expectStatus(
+                await post("/auth/change-password", session.accessToken, {
+                    oldPassword: PASSWORD,
+                    newPassword: "Str0nger!",
+                }),
+                200,
+            );
+            const after = await login("leak", "Str0nger!");
+            assertClean("login after a change", after.user);
             assertClean(
                 "current-user after a change",
-                (
-                    await api("/auth/current-user", {
-                        token: after.json.data.accessToken,
-                    })
-                ).json.data,
+                (await api("/auth/current-user", { token: after.accessToken }))
+                    .data,
             );
         });
 
-        await t.test(
-            "email verification flips the flag and cannot be replayed",
-            async () => {
-                // Same trick as the reset test: only the hash is stored, so the
-                // emailed token cannot be read back. Plant a known pair and let
-                // the controller hash what arrives and compare.
-                const rawToken = `verify-email-${STAMP}`;
-                const hashed = crypto
-                    .createHash("sha256")
-                    .update(rawToken)
-                    .digest("hex");
+        await t.test("email verification flips the flag once", async () => {
+            const raw = await plantToken(outsider.id, "emailVerification");
 
-                await mongoose.connection.db.collection("users").updateOne(
-                    { _id: new mongoose.Types.ObjectId(outsiderId) },
-                    {
-                        $set: {
-                            emailVerificationToken: hashed,
-                            emailVerificationExpiry: new Date(
-                                Date.now() + 10 * 60 * 1000,
-                            ),
-                            isEmailVerified: false,
-                        },
-                    },
-                );
+            expectStatus(await api("/auth/verify-email/not-the-token"), 400);
+            const verified = expectStatus(
+                await api(`/auth/verify-email/${raw}`),
+                200,
+            );
+            assert.equal(verified.data.isEmailVerified, true);
+            expectStatus(
+                await api(`/auth/verify-email/${raw}`),
+                400,
+                "a link works once",
+            );
 
-                const bad = await api("/auth/verify-email/not-the-token");
-                assert.equal(bad.status, 400, JSON.stringify(bad.json));
-
-                const verified = await api(`/auth/verify-email/${rawToken}`);
-                assert.equal(
-                    verified.status,
-                    200,
-                    JSON.stringify(verified.json),
-                );
-                assert.equal(verified.json.data.isEmailVerified, true);
-
-                const stored = await mongoose.connection.db
-                    .collection("users")
-                    .findOne({ _id: new mongoose.Types.ObjectId(outsiderId) });
-                assert.equal(stored.isEmailVerified, true);
-
-                // Single use: a successful verification clears the token.
-                const replay = await api(`/auth/verify-email/${rawToken}`);
-                assert.equal(replay.status, 400, JSON.stringify(replay.json));
-
-                // And the client needs this flag to decide whether to nag.
-                const login = await api("/auth/login", {
-                    method: "POST",
-                    body: {
-                        email: `verify-outsider-${STAMP}@test.local`,
-                        password: "Passw0rd!",
-                    },
-                });
-                assert.equal(login.status, 200, JSON.stringify(login.json));
-                const me = await api("/auth/current-user", {
-                    token: login.json.data.accessToken,
-                });
-                assert.equal(me.json.data.isEmailVerified, true);
-            },
-        );
+            const session = await login("outsider");
+            const me = await api("/auth/current-user", {
+                token: session.accessToken,
+            });
+            assert.equal(me.data.isEmailVerified, true);
+        });
 
         await t.test(
-            "forgot-password and reset-password complete a full cycle",
+            "a password reset or change ends every session",
             async () => {
-                // The request is accepted whether or not the address exists;
-                // a 404 for an unknown one would make this endpoint an oracle
-                // for which emails have accounts.
-                const requested = await api("/auth/forgot-password", {
-                    method: "POST",
-                    body: { email: `verify-member-${STAMP}@test.local` },
-                });
-                assert.equal(
-                    requested.status,
+                // The same answer whether or not the address has an account.
+                expectStatus(
+                    await post("/auth/forgot-password", undefined, {
+                        email: emailFor("member"),
+                    }),
                     200,
-                    JSON.stringify(requested.json),
                 );
-
-                const unknown = await api("/auth/forgot-password", {
-                    method: "POST",
-                    body: { email: `nobody-${STAMP}@test.local` },
-                });
-                assert.equal(
-                    unknown.status,
+                expectStatus(
+                    await post("/auth/forgot-password", undefined, {
+                        email: `nobody-${STAMP}@test.local`,
+                    }),
                     200,
-                    `unknown addresses must not be distinguishable: ${JSON.stringify(unknown.json)}`,
                 );
 
-                // Only the hash is stored, so the emailed token cannot be read
-                // back out. Plant a known pair instead: the controller hashes
-                // whatever arrives and compares, which is the behaviour under
-                // test here.
-                const rawToken = `verify-reset-${STAMP}`;
-                const hashed = crypto
-                    .createHash("sha256")
-                    .update(rawToken)
-                    .digest("hex");
-
-                await mongoose.connection.db.collection("users").updateOne(
-                    { _id: new mongoose.Types.ObjectId(memberId) },
-                    {
-                        $set: {
-                            forgotPasswordToken: hashed,
-                            forgotPasswordExpiry: new Date(
-                                Date.now() + 10 * 60 * 1000,
-                            ),
-                        },
-                    },
-                );
-
-                const wrongToken = await api(
-                    "/auth/reset-password/not-the-token",
-                    { method: "POST", body: { newPassword: "Whatever1!" } },
-                );
-                assert.equal(
-                    wrongToken.status,
+                const raw = await plantToken(member.id, "forgotPassword");
+                expectStatus(
+                    await post(
+                        "/auth/reset-password/not-the-token",
+                        undefined,
+                        { newPassword: "Whatever1!" },
+                    ),
                     400,
-                    JSON.stringify(wrongToken.json),
+                );
+                expectStatus(
+                    await post(`/auth/reset-password/${raw}`, undefined, {
+                        newPassword: "Short1!",
+                    }),
+                    422,
                 );
 
-                // Captured before the reset: this is the session that a
-                // reset is supposed to evict. Both halves of it -- the refresh
-                // token the client renews with, and the access token it is
-                // using right now.
-                const staleRefresh = memberRefreshToken;
-                const staleAccess = memberToken;
+                // The session a reset exists to evict: both halves of it.
+                const stale = {
+                    access: member.accessToken,
+                    refresh: member.refreshToken,
+                };
+                expectStatus(
+                    await post(`/auth/reset-password/${raw}`, undefined, {
+                        newPassword: "N3wPassw0rd!",
+                    }),
+                    200,
+                );
 
-                const reset = await api(`/auth/reset-password/${rawToken}`, {
-                    method: "POST",
-                    body: { newPassword: "N3wPassw0rd!" },
-                });
-                assert.equal(reset.status, 200, JSON.stringify(reset.json));
-
-                // A reset is what someone does when they think their account
-                // is compromised, so a refresh token minted before it must
-                // stop working -- otherwise the other party keeps the account.
-                const staleReplay = await api("/auth/refresh-token", {
-                    method: "POST",
-                    body: { refreshToken: staleRefresh },
-                });
-                assert.equal(
-                    staleReplay.status,
+                expectStatus(
+                    await post("/auth/refresh-token", undefined, {
+                        refreshToken: stale.refresh,
+                    }),
                     401,
-                    `refresh token issued before the reset still works: ${JSON.stringify(staleReplay.json)}`,
                 );
-
-                /*
-                 * The access token is the other half of the same promise, and
-                 * the half that used to survive: it is a stateless JWT, so
-                 * clearing the stored refresh token does not touch it. Before
-                 * credentialsChangedAt, a token captured before the reset kept
-                 * full read *and write* access for a whole ACCESS_TOKEN_EXPIRY
-                 * -- a day, on the configuration the README documents.
-                 */
-                const staleRead = await api("/auth/current-user", {
-                    token: staleAccess,
-                });
-                assert.equal(
-                    staleRead.status,
+                expectStatus(
+                    await api("/auth/current-user", { token: stale.access }),
                     401,
-                    `access token issued before the reset still reads: ${JSON.stringify(staleRead.json)}`,
                 );
-
-                const staleWrite = await api("/projects", {
-                    method: "POST",
-                    token: staleAccess,
-                    body: {
+                expectStatus(
+                    await post("/projects", stale.access, {
                         name: `evicted ${STAMP}`,
-                        description: "must never be created",
-                    },
-                });
-                assert.equal(
-                    staleWrite.status,
+                    }),
                     401,
-                    `access token issued before the reset still writes: ${JSON.stringify(staleWrite.json)}`,
                 );
 
-                // The new password works and the old one no longer does.
-                const withNew = await api("/auth/login", {
-                    method: "POST",
-                    body: {
-                        email: `verify-member-${STAMP}@test.local`,
-                        password: "N3wPassw0rd!",
-                    },
-                });
-                assert.equal(withNew.status, 200, JSON.stringify(withNew.json));
-                memberToken = withNew.json.data.accessToken;
+                const fresh = await login("member", "N3wPassw0rd!");
+                expectStatus(
+                    await post("/auth/login", undefined, {
+                        email: emailFor("member"),
+                        password: PASSWORD,
+                    }),
+                    401,
+                );
 
-                // ...and the password it replaced does not.
-                const withOld = await api("/auth/login", {
-                    method: "POST",
-                    body: {
-                        email: `verify-member-${STAMP}@test.local`,
-                        password: "Passw0rd!",
-                    },
-                });
-                assert.equal(withOld.status, 401, JSON.stringify(withOld.json));
-
-                // change-password carries the same obligation, and revokes the
-                // caller's own session too: the API cannot tell this request's
-                // refresh token apart from anybody else's.
-                const beforeChange = withNew.json.data.refreshToken;
-                const accessBeforeChange = withNew.json.data.accessToken;
-
-                /*
-                 * A JWT's iat is whole seconds, so a token minted in the same
-                 * second as the change is deliberately kept -- otherwise a
-                 * reset would intermittently refuse the sign-in that follows
-                 * it. The login above is milliseconds old, so wait out that
-                 * second rather than assert something the rule does not claim.
-                 */
+                // `iat` is whole seconds and a token from the same second survives,
+                // so wait one out rather than assert what the rule does not claim.
                 await new Promise((resolve) => setTimeout(resolve, 1100));
 
-                const changed = await api("/auth/change-password", {
-                    method: "POST",
-                    token: memberToken,
-                    body: {
+                expectStatus(
+                    await post("/auth/change-password", fresh.accessToken, {
                         oldPassword: "N3wPassw0rd!",
-                        newPassword: "Passw0rd!",
-                    },
-                });
-                assert.equal(changed.status, 200, JSON.stringify(changed.json));
-
-                const afterChange = await api("/auth/refresh-token", {
-                    method: "POST",
-                    body: { refreshToken: beforeChange },
-                });
-                assert.equal(
-                    afterChange.status,
+                        newPassword: PASSWORD,
+                    }),
+                    200,
+                );
+                expectStatus(
+                    await post("/auth/refresh-token", undefined, {
+                        refreshToken: fresh.refreshToken,
+                    }),
                     401,
-                    `refresh token issued before the change still works: ${JSON.stringify(afterChange.json)}`,
+                );
+                expectStatus(
+                    await api("/auth/current-user", {
+                        token: fresh.accessToken,
+                    }),
+                    401,
                 );
 
-                const accessAfterChange = await api("/auth/current-user", {
-                    token: accessBeforeChange,
-                });
-                assert.equal(
-                    accessAfterChange.status,
-                    401,
-                    `access token issued before the change still works: ${JSON.stringify(accessAfterChange.json)}`,
+                member = { ...(await login("member")), id: member.id };
+                expectStatus(
+                    await post(`/auth/reset-password/${raw}`, undefined, {
+                        newPassword: "An0therOne!",
+                    }),
+                    400,
                 );
-
-                // Back on the original password, with a fresh session for the
-                // subtests that follow.
-                const relogin = await api("/auth/login", {
-                    method: "POST",
-                    body: {
-                        email: `verify-member-${STAMP}@test.local`,
-                        password: "Passw0rd!",
-                    },
-                });
-                assert.equal(relogin.status, 200, JSON.stringify(relogin.json));
-                memberToken = relogin.json.data.accessToken;
-
-                // Single use: the token is cleared by a successful reset.
-                const replay = await api(`/auth/reset-password/${rawToken}`, {
-                    method: "POST",
-                    body: { newPassword: "An0therOne!" },
-                });
-                assert.equal(replay.status, 400, JSON.stringify(replay.json));
             },
         );
 
         await t.test(
-            "IDOR: child resources are scoped to the project in the URL",
+            "IDOR: a child resource answers only to its own project",
             async () => {
-                // Seed a task, subtask, and note inside the *other* project.
-                const fTask = await api(`/tasks/${otherProjectId}`, {
-                    method: "POST",
-                    token: adminToken,
-                    body: { title: "foreign task" },
-                });
-                assert.equal(fTask.status, 201, JSON.stringify(fTask.json));
-                const foreignTaskId = fTask.json.data._id;
-                createdTaskIds.push(foreignTaskId);
-
-                const fSub = await api(
-                    `/tasks/${otherProjectId}/t/${foreignTaskId}/subtasks`,
-                    {
-                        method: "POST",
-                        token: adminToken,
-                        body: { title: "foreign subtask" },
-                    },
+                const foreignTask = await createTask(
+                    otherProjectId,
+                    admin.accessToken,
+                    { title: "foreign" },
                 );
-                assert.equal(fSub.status, 201, JSON.stringify(fSub.json));
-                const foreignSubTaskId = fSub.json.data._id;
+                const foreignSub = expectStatus(
+                    await post(
+                        `/tasks/${otherProjectId}/t/${foreignTask._id}/subtasks`,
+                        admin.accessToken,
+                        { title: "sub" },
+                    ),
+                    201,
+                ).data;
+                const foreignNote = expectStatus(
+                    await post(`/notes/${otherProjectId}`, admin.accessToken, {
+                        content: "foreign",
+                    }),
+                    201,
+                ).data;
 
-                const fNote = await api(`/notes/${otherProjectId}`, {
-                    method: "POST",
-                    token: adminToken,
-                    body: { content: "foreign note" },
-                });
-                assert.equal(fNote.status, 201, JSON.stringify(fNote.json));
-                const foreignNoteId = fNote.json.data._id;
-
-                // The attack: pair a projectId the caller legitimately administers with a
-                // child id belonging to a different project. Every one must 404 -- not 200,
-                // and not 403, which would still confirm the resource exists.
+                // A project the caller administers, paired with another project's
+                // child id: 404, not 403, which would confirm the id exists.
                 const attacks = [
-                    ["GET", `/tasks/${projectId}/t/${foreignTaskId}`],
-                    ["PUT", `/tasks/${projectId}/t/${foreignTaskId}`],
-                    ["DELETE", `/tasks/${projectId}/t/${foreignTaskId}`],
-                    ["PUT", `/tasks/${projectId}/st/${foreignSubTaskId}`],
-                    ["DELETE", `/tasks/${projectId}/st/${foreignSubTaskId}`],
-                    ["GET", `/notes/${projectId}/n/${foreignNoteId}`],
-                    ["PUT", `/notes/${projectId}/n/${foreignNoteId}`],
-                    ["DELETE", `/notes/${projectId}/n/${foreignNoteId}`],
+                    ["GET", `/tasks/${projectId}/t/${foreignTask._id}`],
+                    ["PUT", `/tasks/${projectId}/t/${foreignTask._id}`],
+                    ["DELETE", `/tasks/${projectId}/t/${foreignTask._id}`],
+                    ["PUT", `/tasks/${projectId}/st/${foreignSub._id}`],
+                    ["DELETE", `/tasks/${projectId}/st/${foreignSub._id}`],
+                    ["GET", `/notes/${projectId}/n/${foreignNote._id}`],
+                    ["PUT", `/notes/${projectId}/n/${foreignNote._id}`],
+                    ["DELETE", `/notes/${projectId}/n/${foreignNote._id}`],
                 ];
-
                 for (const [method, pathname] of attacks) {
                     const body =
                         method === "PUT"
@@ -1563,223 +1221,151 @@ test("V1 backend smoke test", async (t) => {
                                   isCompleted: true,
                               }
                             : undefined;
-                    const r = await api(pathname, {
+                    const res = await api(pathname, {
                         method,
-                        token: adminToken,
+                        token: admin.accessToken,
                         body,
                     });
                     assert.equal(
-                        r.status,
+                        res.status,
                         404,
-                        `${method} ${pathname} -> ${r.status} ${JSON.stringify(r.json)}`,
+                        `${method} ${pathname} -> ${res.status}`,
                     );
                 }
 
-                // ...and nothing in the other project was actually touched.
-                const intact = await api(
-                    `/tasks/${otherProjectId}/t/${foreignTaskId}`,
-                    {
-                        token: adminToken,
-                    },
+                const intact = expectStatus(
+                    await api(`/tasks/${otherProjectId}/t/${foreignTask._id}`, {
+                        token: admin.accessToken,
+                    }),
+                    200,
                 );
-                assert.equal(intact.status, 200, JSON.stringify(intact.json));
-                assert.equal(intact.json.data.subtasks.length, 1);
+                assert.equal(intact.data.subtasks.length, 1);
             },
         );
 
         await t.test(
-            "a single attachment can be removed without the task",
+            "one attachment can be removed without its task",
             async () => {
                 const before = await api(`/tasks/${projectId}/t/${taskId}`, {
-                    token: adminToken,
+                    token: admin.accessToken,
                 });
-                const attachment = before.json.data.attachments?.[0];
-                assert.ok(
-                    attachment?._id,
-                    `expected the task to carry an attachment: ${JSON.stringify(before.json.data.attachments)}`,
-                );
+                const attachment = before.data.attachments[0];
+                const attachmentPath = `/tasks/${projectId}/t/${taskId}/attachments/${attachment._id}`;
 
-                // Members may not: this is a task mutation like any other.
-                const asMember = await api(
-                    `/tasks/${projectId}/t/${taskId}/attachments/${attachment._id}`,
-                    { method: "DELETE", token: memberToken },
-                );
-                assert.equal(
-                    asMember.status,
+                expectStatus(
+                    await del(attachmentPath, member.accessToken),
                     403,
-                    JSON.stringify(asMember.json),
                 );
-
-                const removed = await api(
-                    `/tasks/${projectId}/t/${taskId}/attachments/${attachment._id}`,
-                    { method: "DELETE", token: adminToken },
+                const removed = expectStatus(
+                    await del(attachmentPath, admin.accessToken),
+                    200,
                 );
-                assert.equal(removed.status, 200, JSON.stringify(removed.json));
-                assert.equal(removed.json.data.attachments.length, 0);
+                assert.equal(removed.data.attachments.length, 0);
 
-                // The task itself survives; only the attachment is gone.
-                const after = await api(`/tasks/${projectId}/t/${taskId}`, {
-                    token: adminToken,
-                });
-                assert.equal(after.status, 200, JSON.stringify(after.json));
-                assert.equal(after.json.data.attachments.length, 0);
-
-                // Gone means gone: a second delete is a 404, not a 500.
-                const again = await api(
-                    `/tasks/${projectId}/t/${taskId}/attachments/${attachment._id}`,
-                    { method: "DELETE", token: adminToken },
+                const after = expectStatus(
+                    await api(`/tasks/${projectId}/t/${taskId}`, {
+                        token: admin.accessToken,
+                    }),
+                    200,
                 );
-                assert.equal(again.status, 404, JSON.stringify(again.json));
+                assert.equal(after.data.attachments.length, 0);
 
-                // And it cannot be reached through a project the caller is not
-                // scoped to, the same as every other child resource.
-                const crossProject = await api(
-                    `/tasks/${otherProjectId}/t/${taskId}/attachments/${attachment._id}`,
-                    { method: "DELETE", token: adminToken },
-                );
-                assert.equal(
-                    crossProject.status,
+                expectStatus(await del(attachmentPath, admin.accessToken), 404);
+                expectStatus(
+                    await del(
+                        `/tasks/${otherProjectId}/t/${taskId}/attachments/${attachment._id}`,
+                        admin.accessToken,
+                    ),
                     404,
-                    JSON.stringify(crossProject.json),
                 );
             },
         );
 
-        await t.test("cleanup: delete task", async () => {
-            const d = await api(`/tasks/${projectId}/t/${taskId}`, {
-                method: "DELETE",
-                token: adminToken,
-            });
-            assert.equal(d.status, 200, JSON.stringify(d.json));
-        });
-
         await t.test(
-            "deleting a project cascades to its members, tasks, subtasks and notes",
+            "deleting a project removes everything under it",
             async () => {
-                // A throwaway project so the assertions below can be exact
-                // counts rather than deltas against the shared fixtures.
-                const p = await api("/projects", {
-                    method: "POST",
-                    token: adminToken,
-                    body: {
-                        name: `Verify Cascade ${STAMP}`,
-                        description: "cascade delete",
-                    },
-                });
-                assert.equal(p.status, 201, JSON.stringify(p.json));
-                const cascadeId = p.json.data._id;
-                createdProjectIds.push(cascadeId);
-
-                await api(`/projects/${cascadeId}/members`, {
-                    method: "POST",
-                    token: adminToken,
-                    body: {
-                        email: `verify-member-${STAMP}@test.local`,
+                const cascadeId = await createProject(
+                    admin.accessToken,
+                    `Verify cascade ${STAMP}`,
+                );
+                await post(
+                    `/projects/${cascadeId}/members`,
+                    admin.accessToken,
+                    {
+                        email: emailFor("member"),
                         role: "member",
                     },
+                );
+                const task = await createTask(cascadeId, admin.accessToken, {
+                    title: "cascade",
+                });
+                await post(
+                    `/tasks/${cascadeId}/t/${task._id}/subtasks`,
+                    admin.accessToken,
+                    { title: "sub" },
+                );
+                await post(`/notes/${cascadeId}`, admin.accessToken, {
+                    content: "note",
                 });
 
-                const ct = await api(`/tasks/${cascadeId}`, {
-                    method: "POST",
-                    token: adminToken,
-                    body: { title: "cascade task" },
-                });
-                assert.equal(ct.status, 201, JSON.stringify(ct.json));
-                const cascadeTaskId = ct.json.data._id;
-                createdTaskIds.push(cascadeTaskId);
+                expectStatus(
+                    await del(`/projects/${cascadeId}`, admin.accessToken),
+                    200,
+                );
 
-                await api(`/tasks/${cascadeId}/t/${cascadeTaskId}/subtasks`, {
-                    method: "POST",
-                    token: adminToken,
-                    body: { title: "cascade subtask" },
-                });
-                await api(`/notes/${cascadeId}`, {
-                    method: "POST",
-                    token: adminToken,
-                    body: { content: "cascade note" },
-                });
-
-                const del = await api(`/projects/${cascadeId}`, {
-                    method: "DELETE",
-                    token: adminToken,
-                });
-                assert.equal(del.status, 200, JSON.stringify(del.json));
-
-                // MongoDB has no foreign keys, so nothing cascades unless the
-                // controller does it. Assert against the collections directly:
-                // the API would report these as absent either way, since every
-                // read is scoped to a project that no longer exists.
+                // MongoDB has no foreign keys, so count the collections directly.
                 const db = mongoose.connection.db;
-                const projectOid = new mongoose.Types.ObjectId(cascadeId);
-                const taskOid = new mongoose.Types.ObjectId(cascadeTaskId);
-
+                const project = new mongoose.Types.ObjectId(cascadeId);
                 const leftovers = {
                     projectmembers: await db
                         .collection("projectmembers")
-                        .countDocuments({ project: projectOid }),
+                        .countDocuments({ project }),
                     tasks: await db
                         .collection("tasks")
-                        .countDocuments({ project: projectOid }),
-                    subtasks: await db
-                        .collection("subtasks")
-                        .countDocuments({ task: taskOid }),
+                        .countDocuments({ project }),
+                    subtasks: await db.collection("subtasks").countDocuments({
+                        task: new mongoose.Types.ObjectId(task._id),
+                    }),
                     projectnotes: await db
                         .collection("projectnotes")
-                        .countDocuments({ project: projectOid }),
+                        .countDocuments({ project }),
                 };
-
-                assert.deepEqual(
-                    leftovers,
-                    {
-                        projectmembers: 0,
-                        tasks: 0,
-                        subtasks: 0,
-                        projectnotes: 0,
-                    },
-                    `orphaned rows after project delete: ${JSON.stringify(leftovers)}`,
-                );
+                assert.deepEqual(leftovers, {
+                    projectmembers: 0,
+                    tasks: 0,
+                    subtasks: 0,
+                    projectnotes: 0,
+                });
             },
         );
     } finally {
         const db = mongoose.connection.db;
-        const projectObjIds = createdProjectIds.map(
-            (id) => new mongoose.Types.ObjectId(id),
-        );
-        const userObjIds = createdUserIds.map(
-            (id) => new mongoose.Types.ObjectId(id),
-        );
-        const taskObjIds = createdTaskIds.map(
-            (id) => new mongoose.Types.ObjectId(id),
-        );
+        const ids = (list) => list.map((id) => new mongoose.Types.ObjectId(id));
+        const projects = ids(created.projects);
 
-        await db
-            .collection("projects")
-            .deleteMany({ _id: { $in: projectObjIds } });
+        await db.collection("projects").deleteMany({ _id: { $in: projects } });
         await db
             .collection("projectmembers")
-            .deleteMany({ project: { $in: projectObjIds } });
+            .deleteMany({ project: { $in: projects } });
+        await db.collection("tasks").deleteMany({ project: { $in: projects } });
         await db
-            .collection("tasks")
-            .deleteMany({ project: { $in: projectObjIds } });
-        if (taskObjIds.length > 0) {
-            await db
-                .collection("subtasks")
-                .deleteMany({ task: { $in: taskObjIds } });
-        }
+            .collection("subtasks")
+            .deleteMany({ task: { $in: ids(created.tasks) } });
         await db
             .collection("projectnotes")
-            .deleteMany({ project: { $in: projectObjIds } });
-        await db.collection("users").deleteMany({ _id: { $in: userObjIds } });
+            .deleteMany({ project: { $in: projects } });
+        await db
+            .collection("users")
+            .deleteMany({ _id: { $in: ids(created.users) } });
 
-        // Filenames are randomised server-side, so clean up by the exact names the
-        // API handed back rather than by guessing at a suffix.
-        const imagesDir = path.resolve("public/images");
-        for (const name of uploadedFiles) {
-            await fs.unlink(path.join(imagesDir, name)).catch(() => {});
-        }
-        const avatarsDir = path.resolve("public/avatars");
-        for (const name of uploadedAvatars) {
-            await fs.unlink(path.join(avatarsDir, name)).catch(() => {});
+        // Stored names are random, so remove exactly the ones the API returned.
+        for (const [dir, names] of [
+            ["public/images", created.files],
+            ["public/avatars", created.avatars],
+        ]) {
+            for (const name of names) {
+                await fs.unlink(path.resolve(dir, name)).catch(() => {});
+            }
         }
 
         await mongoose.disconnect();
