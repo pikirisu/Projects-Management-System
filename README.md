@@ -1,5 +1,10 @@
 # Project Camp
 
+**Live demo: [projects-management-system-seven.vercel.app](https://projects-management-system-seven.vercel.app)**.
+Press "Try the demo" to sign in as the admin of two sample projects; no sign-up
+needed, and the workspace resets every night. The API runs on a free tier that
+sleeps when idle, so the first visit can take up to a minute to wake it.
+
 A project-management app with per-project, role-based access control: an
 Express 5 + MongoDB REST API, and a React 19 client with a drag-and-drop task
 board, a cross-project "My tasks" view, due dates, priorities and progress.
@@ -20,7 +25,7 @@ flowchart LR
     SPA["React SPA<br/>(TanStack Query)"] -- "Bearer JWT, JSON / multipart" --> API["Express 5 API"]
     API --> DB[("MongoDB")]
     API --> Files["Cloudinary<br/>(local disk in dev and CI)"]
-    API --> Mail["SMTP<br/>(Mailtrap)"]
+    API --> Mail["Brevo HTTPS API<br/>(SMTP in development)"]
 ```
 
 Every request to `/api/v1` passes through the same pipeline:
@@ -55,6 +60,8 @@ Each one is marked in the code with a `Decision:` comment, so
 | **Single-flight token refresh** ([api.ts](frontend/src/lib/api.ts))                                                                                                        | The API rotates refresh tokens, so parallel 401s must share one refresh or they spend the same token twice.                                                                                 |
 | **Optimistic card moves, with rollback** ([queries.ts](frontend/src/lib/queries.ts))                                                                                       | A drag that waits for the server feels broken; a refusal restores the exact previous board and says why in a toast.                                                                         |
 | **Due dates are calendar days** ([display.ts](frontend/src/lib/display.ts))                                                                                                | Stored as UTC midnight and compared in UTC, so "3 Oct" never shows as "2 Oct" west of Greenwich.                                                                                            |
+| **Production email goes over HTTPS** ([mail.js](src/utils/mail.js))                                                                                                        | Render's free tier blocks outbound SMTP, so production sends through Brevo's API; development keeps SMTP. Reserved test domains are never sent to.                                          |
+| **A shared demo nobody can lock** ([auth.middleware.js](src/middlewares/auth.middleware.js))                                                                               | Demo accounts cannot change their password, photo or name, so one visitor cannot lock out or deface it for the next. Everything else they change is undone by a nightly reset.              |
 
 ## Data model
 
@@ -121,6 +128,30 @@ Without Cloudinary credentials, uploads are written to `public/` and served by
 the API, which is the right setting for development and CI. A deployed server
 needs Cloudinary, because a PaaS filesystem is wiped on every redeploy.
 
+## Deployment
+
+| Piece    | Host          | Configured by                                                    |
+| -------- | ------------- | ---------------------------------------------------------------- |
+| Client   | Vercel        | [`frontend/vercel.json`](frontend/vercel.json), root `frontend/` |
+| API      | Render (free) | [`render.yaml`](render.yaml), a Blueprint                        |
+| Database | MongoDB Atlas | `MONGO_URI` on Render                                            |
+| Files    | Cloudinary    | `CLOUDINARY_*` on Render                                         |
+| Email    | Brevo         | `BREVO_API_KEY` and `MAIL_FROM` on Render                        |
+
+- **Render** deploys a commit only after its CI passes (`autoDeployTrigger:
+checksPass`), generates both JWT secrets, and health-checks
+  `/api/v1/healthcheck`, which answers 503 until MongoDB connects, so a
+  deploy that cannot reach the database never takes traffic.
+- **Vercel** rewrites every path to `index.html`; without that, refreshing a
+  board or opening an emailed reset link would 404 on a static host.
+- **The demo** is the seeded `demo.owner@example.com`. The client shows "Try
+  the demo" when `VITE_DEMO_EMAIL` and `VITE_DEMO_PASSWORD` are set, and the
+  API's `DEMO_EMAILS` protects those accounts.
+  [`demo-reset.yml`](.github/workflows/demo-reset.yml) re-runs the seed with
+  `--reset` every night once the repository variable `DEMO_SERVER_URL` is set.
+- **CORS** allows only the production client, so Vercel preview deployments
+  of other branches cannot call the production API.
+
 ### Upgrading an existing database
 
 Project names used to be unique across the whole server, enforced by a
@@ -137,11 +168,11 @@ A fresh database never has the index, which is why CI does not need this.
 
 ## Testing
 
-| Command                   | What it covers                                                                                                          | Needs                                                       |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| `npm test`                | Token freshness, upload path traversal, error mapping, link building                                                    | Nothing                                                     |
-| `npm run verify`          | 26 end-to-end scenarios: RBAC, IDOR, upload allowlist, session revocation, last admin, My tasks scoping, cascade delete | A running API (`RATE_LIMIT_ENABLED=false`) and its database |
-| `cd frontend && npm test` | 111 component and unit tests: board, drag and drop, rollback, permissions, auth refresh, forms                          | Nothing                                                     |
+| Command                   | What it covers                                                                                                                      | Needs                                                       |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `npm test`                | Token freshness, upload path traversal, error mapping, email delivery, link building                                                | Nothing                                                     |
+| `npm run verify`          | 27 end-to-end scenarios: RBAC, IDOR, upload allowlist, session revocation, last admin, My tasks scoping, demo guard, cascade delete | A running API (`RATE_LIMIT_ENABLED=false`) and its database |
+| `cd frontend && npm test` | 114 component and unit tests: board, drag and drop, rollback, permissions, auth refresh, forms, demo sign-in                        | Nothing                                                     |
 
 CI (`.github/workflows/ci.yml`) runs all three on every push, the end-to-end
 suite against a real MongoDB service container, plus lint, formatting, a
@@ -165,6 +196,9 @@ See `.env.example` for every variable with a comment. The essentials:
 | `FORGOT_PASSWORD_REDIRECT_URL`, `EMAIL_VERIFICATION_REDIRECT_URL` | Client routes the emailed links open.                        |
 | `CLOUDINARY_*`                                                    | All three set: uploads go to Cloudinary.                     |
 | `TRUST_PROXY`                                                     | Proxy hops to trust, so rate limiting sees real client IPs.  |
+| `MAIL_FROM`, `BREVO_API_KEY`                                      | Sender address, and Brevo's API key for production email.    |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`                | Development email, used when `BREVO_API_KEY` is unset.       |
+| `DEMO_EMAILS`                                                     | Shared demo accounts whose password and profile are locked.  |
 
 ## Future improvements
 
